@@ -1,0 +1,7 @@
+PASS
+25 unique asset GUIDs
+10 scene/stage script and asset references resolved
+7 scene object IDs resolved
+Required built-in modules present
+C# compiled separately against installed Unity 6000.6.0f1 references (0 errors, 0 warnings)
+Unity Play Mode, shader rendering and executable build remain unverified (license/IPC startup failure).
