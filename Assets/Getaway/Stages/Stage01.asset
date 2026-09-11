@@ -22,3 +22,10 @@ MonoBehaviour:
   escapeSeconds: 5
   crewCount: 3
   seed: 17
+  bankDistance: 180
+  crewExitTime: 14
+  lateGrace: 12
+  arrivalScoreWindow: 10
+  maxArrivalScore: 1000
+  startingLoot: 12000
+  cashLossPerDamage: 120

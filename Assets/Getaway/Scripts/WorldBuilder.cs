@@ -6,9 +6,11 @@ namespace Getaway
     public sealed class WorldBuilder : MonoBehaviour
     {
         public GameObject playerVisualPrefab;
+        public GameObject coupeVisualPrefab;
+        public GameObject vanVisualPrefab;
         public GameObject policeVisualPrefab;
         public GameObject crewVisualPrefab;
-        public Vector3 Pickup => new Vector3(0, 0.65f, 32);
+        public Vector3 Pickup { get; private set; }
         public Vector3 Destination { get; private set; }
         public ArcadeCar Player { get; private set; }
         public readonly List<PoliceDriver> Police = new List<PoliceDriver>();
@@ -39,7 +41,7 @@ namespace Getaway
             return obj;
         }
 
-        public void Build(StageDefinition stage)
+        public void Build(StageDefinition stage, OwnedVehicle loadout = null)
         {
             Clear();
             root = new GameObject("Generated Stage");
@@ -52,6 +54,7 @@ namespace Getaway
             var green = Material(new Color(0.17f, 0.78f, 0.52f));
             var blue = Material(new Color(0.10f, 0.55f, 0.9f));
             float length = stage.roadLength;
+            Pickup = new Vector3(0, 0.65f, Mathf.Clamp(stage.bankDistance, 40, length - 100));
             Destination = new Vector3(0, 0.65f, length - 25);
             slippery = new PhysicsMaterial("Arcade car surface") { dynamicFriction = 0, staticFriction = 0, frictionCombine = PhysicsMaterialCombine.Minimum, bounciness = 0 };
             Box("Ground", root.transform, new Vector3(0, -0.6f, length / 2), new Vector3(160, 1, length + 160), ground);
@@ -76,12 +79,14 @@ namespace Getaway
                 }
             for (int z = 125; z < length - 90; z += 85)
             {
+                if (Mathf.Abs(z - Pickup.z) < 25) continue;
                 float x = ((z / 85) % 2 == 0 ? -1 : 1) * 7;
                 Box("Roadworks", root.transform, new Vector3(x, 0.7f, z), new Vector3(8, 1.4f, 2), orange);
             }
             Box("Pickup zone", root.transform, new Vector3(0, 0.04f, Pickup.z), new Vector3(12, 0.06f, 12), blue, false);
             Box("Safehouse zone", root.transform, new Vector3(0, 0.04f, Destination.z), new Vector3(14, 0.06f, 14), green, false);
-            Label("CREW PICKUP", new Vector3(0, 6, Pickup.z), blue.color);
+            Box("Bank", root.transform, new Vector3(25, 5, Pickup.z), new Vector3(14, 10, 20), blue);
+            Label("BANK / PICKUP", new Vector3(0, 6, Pickup.z), blue.color);
             Label("SAFEHOUSE", new Vector3(0, 7, Destination.z), green.color);
             for (int i = 0; i < stage.crewCount; i++)
             {
@@ -97,9 +102,20 @@ namespace Getaway
                 member.name = "Crew " + (i + 1);
                 member.transform.position = new Vector3(5.5f, 1, Pickup.z - 3 + i * 2);
                 crew.Add(member);
+                member.SetActive(false);
             }
-            Player = Car("Player", new Vector3(0, 0.8f, 5), Material(new Color(0.9f, 0.48f, 0.13f)), playerVisualPrefab);
+            if (loadout == null) loadout = new OwnedVehicle { id = "sedan" };
+            Color paint = loadout.id == "coupe" ? new Color(0.8f, 0.12f, 0.20f) : loadout.id == "van" ? new Color(0.18f, 0.55f, 0.4f) : new Color(0.9f, 0.48f, 0.13f);
+            GameObject prefab = loadout.id == "coupe" ? coupeVisualPrefab : loadout.id == "van" ? vanVisualPrefab : playerVisualPrefab;
+            Player = Car("Player", new Vector3(0, 0.8f, 5), Material(paint), prefab);
             Player.playerControlled = true;
+            Player.ApplyLoadout(loadout);
+            if (prefab == null)
+            {
+                var cabin = Player.transform.Find("Visual/Cabin");
+                if (loadout.id == "van") { cabin.localScale = new Vector3(1.8f, 1.2f, 3.0f); cabin.localPosition = new Vector3(0, 0.7f, -0.25f); }
+                else if (loadout.id == "coupe") cabin.localScale = new Vector3(1.5f, 0.4f, 1.6f);
+            }
         }
         void Label(string text, Vector3 position, Color color)
         {
@@ -142,11 +158,13 @@ namespace Getaway
             return obj.AddComponent<ArcadeCar>();
         }
         public void BoardCrew() { foreach (var member in crew) member.SetActive(false); }
+        public void ShowCrew() { foreach (var member in crew) member.SetActive(true); }
         public void SpawnPolice(StageDefinition stage)
         {
             for (int i = 0; i < stage.policeCount; i++)
             {
-                var car = Car("Police " + (i + 1), new Vector3(i % 2 == 0 ? -4 : 4, 0.8f, -5 - i * 7), Material(new Color(0.8f, 0.84f, 0.9f)), policeVisualPrefab);
+                float spawnZ = Player.transform.position.z - 28 - i * 7;
+                var car = Car("Police " + (i + 1), new Vector3(i % 2 == 0 ? -4 : 4, 0.8f, spawnZ), Material(new Color(0.8f, 0.84f, 0.9f)), policeVisualPrefab);
                 car.topSpeed = stage.policeSpeed;
                 // Patrol cars keep full grip: a sliding pursuer loses the player instead of pressuring them.
                 car.handbrakeDrift = false;

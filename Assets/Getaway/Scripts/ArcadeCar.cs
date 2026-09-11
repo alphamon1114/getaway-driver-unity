@@ -41,7 +41,10 @@ namespace Getaway
         public float driftBrakeDrag = 0.8f;
 
         public float health = 100;
+        public float maxHealth = 100;
+        public float collisionDamageMultiplier = 1;
         public event Action<float, string> Damaged;
+        public event Action<float> PoliceImpact;
 
         public Rigidbody Body { get; private set; }
         public float Speed => Body == null ? 0 : Body.linearVelocity.magnitude;
@@ -146,14 +149,29 @@ namespace Getaway
             float impact = hit.relativeVelocity.magnitude;
             if (impact < 4) return;
             lastDamage = Time.time;
-            ApplyDamage(Mathf.Clamp((impact - 3) * 1.4f, 0, 35), hit.gameObject.name);
+            bool police = hit.rigidbody != null && hit.rigidbody.GetComponent<PoliceDriver>() != null;
+            ApplyDamage(Mathf.Clamp((impact - 3) * 1.4f, 0, 35) * collisionDamageMultiplier, hit.gameObject.name, police);
         }
 
-        public void ApplyDamage(float amount, string source)
+        public void ApplyDamage(float amount, string source, bool policeCollision = false)
         {
             if (health <= 0 || amount <= 0) return;
+            amount = Mathf.Min(health, amount);
             health = Mathf.Max(0, health - amount);
             Damaged?.Invoke(amount, source);
+            if (policeCollision) PoliceImpact?.Invoke(amount);
+        }
+
+        public void ApplyLoadout(OwnedVehicle owned)
+        {
+            var spec = GarageCatalog.Find(owned.id);
+            topSpeed = spec.Speed * (1 + owned.engine * 0.08f);
+            acceleration = spec.Acceleration * (1 + owned.engine * 0.10f);
+            health = maxHealth = spec.Health;
+            lateralGrip = spec.Grip * (1 + owned.tires * 0.10f);
+            gripRecovery = 5 + owned.tires;
+            collisionDamageMultiplier = 1 - owned.armor * 0.12f;
+            grip = lateralGrip;
         }
 
         public void Recover(Vector3 position)

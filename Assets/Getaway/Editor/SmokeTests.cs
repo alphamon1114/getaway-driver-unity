@@ -24,7 +24,7 @@ namespace Getaway.Editor
             oldProduct = PlayerSettings.productName;
             SessionState.SetString("GetawayOriginalProduct", oldProduct);
             // Do not overwrite a human player's progress during tests.
-            PlayerSettings.productName = "GetawayDriver-AutomatedTests";
+            PlayerSettings.productName = "GetawayDriver-AutomatedTests-" + Guid.NewGuid().ToString("N");
             SessionState.SetBool(Key, true);
             EditorSceneManager.OpenScene(ProjectSetup.ScenePath);
             EditorApplication.isPlaying = true;
@@ -74,6 +74,12 @@ namespace Getaway.Editor
             car.Body.position = pos; car.transform.position = pos;
             car.Body.linearVelocity = Vector3.zero; Physics.SyncTransforms();
         }
+        static void BoardNow(GameSession game)
+        {
+            Teleport(game.World.Player, game.World.Pickup);
+            game.Tick(Mathf.Max(0.01f, game.Stage.crewExitTime - game.Elapsed + 0.01f));
+            game.Tick(2.1f);
+        }
         static IEnumerator Verify()
         {
             yield return null;
@@ -88,11 +94,20 @@ namespace Getaway.Editor
             car.Body.linearVelocity = Vector3.forward * 5;
             game.Tick(2.1f);
             Check(game.State == MissionState.Pickup, "Cannot board while driving fast");
-            car.Body.linearVelocity = Vector3.zero; game.Tick(2.1f);
+            car.Body.linearVelocity = Vector3.zero; game.Tick(0.1f);
+            Check(!game.Appointment.CrewAvailable && game.Loot == 0 && game.World.Police.Count == 0, "No crew, loot or pursuit before scheduled bank exit");
+            int earlyScore = game.ArrivalScore;
+            BoardNow(game);
+            Check(game.ArrivalScore == earlyScore, "Waiting at bank preserves first-arrival score");
             Check(game.State == MissionState.Chase && game.World.Police.Count == 2, "Boarding triggers pursuit");
+            int cash = game.Loot;
+            car.ApplyDamage(10, "wall");
+            Check(game.Loot == cash, "Environment damage does not deduct money");
+            car.ApplyDamage(10, "police", true);
+            Check(game.Loot == cash - 1200 && game.LostLoot == 1200, "Police damage event deducts proportional money");
             Teleport(car, game.World.Destination); game.Tick(0.1f);
             Check(game.State == MissionState.Chase, "Destination blocked while wanted");
-            Teleport(car, new Vector3(0, 0.8f, 200)); game.Tick(2);
+            Teleport(car, game.World.Pickup + Vector3.forward * 160); game.Tick(2);
             var cop = game.World.Police[0].GetComponent<ArcadeCar>();
             Teleport(cop, car.transform.position + Vector3.right * 10); game.Tick(0.1f);
             Check(game.EscapeProgress == 0, "Escape countdown resets when police approach");
@@ -102,15 +117,22 @@ namespace Getaway.Editor
             Check(game.State == MissionState.Escaped, "Must stop at destination");
             car.Body.linearVelocity = Vector3.zero; game.Tick(0.1f);
             Check(game.State == MissionState.Won && ProgressStore.Load().highestUnlocked >= 1, "Delivery wins and persists unlock");
+            long wallet = game.Progress.wallet;
+            Check(wallet == game.Loot && !game.PendingPayout, "Escaped cash is banked once");
+            game.RetryPayout(); game.Tick(1);
+            Check(game.Progress.wallet == wallet, "Repeated result updates cannot duplicate payout");
+            game.OpenShop(); game.BuyUpgrade(UpgradeKind.Engine); game.CloseShop();
+            Check(game.Account.Selected.engine == 1 && ProgressStore.Load().vehicles[0].engine == 1, "Shop upgrade persists through Unity JSON serialization");
             game.LoadStage(1); yield return null; game.Begin();
             float remaining = game.Remaining; game.TogglePause(); game.Tick(10);
             Check(Mathf.Approximately(remaining, game.Remaining), "Pause freezes mission time");
             game.TogglePause(); game.Tick(game.Stage.timeLimit + 1);
             Check(game.State == MissionState.Lost, "Timeout loses mission");
+            Check(game.Progress.wallet == wallet - 3000, "Failure leaves banked wallet intact");
             game.LoadStage(0); yield return null; game.Begin(); game.World.Player.ApplyDamage(100, "test"); game.Tick(0.1f);
             Check(game.State == MissionState.Lost, "Vehicle destruction loses mission");
             game.LoadStage(0); yield return null; game.Begin();
-            Teleport(game.World.Player, game.World.Pickup); game.Tick(2.1f);
+            BoardNow(game);
             Teleport(game.World.Police[0].GetComponent<ArcadeCar>(), game.World.Player.transform.position + Vector3.right * 4);
             game.Tick(4.1f); Check(game.State == MissionState.Lost, "Stationary surrounded player is arrested");
             game.LoadStage(0); yield return null; game.Begin();
@@ -122,10 +144,10 @@ namespace Getaway.Editor
             while (EditorApplication.timeSinceStartup < until) yield return null;
             Check(car.Speed < 2, "Brake stops moving car");
             game.LoadStage(2); yield return null; game.Begin();
-            Teleport(game.World.Player, game.World.Pickup); game.Tick(2.1f);
+            BoardNow(game);
             Check(game.World.Police.Count == 4, "Final stage spawns four police");
             float copStart = game.World.Police[0].transform.position.z;
-            Teleport(game.World.Player, new Vector3(0, 0.8f, 85));
+            Teleport(game.World.Player, game.World.Pickup + Vector3.forward * 45);
             until = EditorApplication.timeSinceStartup + 2;
             while (EditorApplication.timeSinceStartup < until) yield return null;
             Check(game.World.Police[0].transform.position.z > copStart + 3, "Police AI pursues under real physics");

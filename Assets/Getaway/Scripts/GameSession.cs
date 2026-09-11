@@ -12,7 +12,7 @@ namespace Getaway
         public int StageIndex { get; private set; }
         public bool Paused { get; private set; }
         public float Remaining { get; private set; }
-        public float Boarding { get; private set; }
+        public float Boarding => Appointment == null ? 0 : (float)Appointment.Boarding;
         public float EscapeProgress { get; private set; }
         public float ArrestProgress { get; private set; }
         public float NearestPolice { get; private set; }
@@ -21,7 +21,20 @@ namespace Getaway
         public RunLogger Logger { get; private set; }
         public StageDefinition Stage => stages[StageIndex];
         public bool Active => State == MissionState.Pickup || State == MissionState.Chase || State == MissionState.Escaped;
-        public ProgressStore.Data Progress { get; private set; }
+        public CareerAccount Account { get; private set; }
+        public CareerData Progress => Account.Data;
+        public PickupSchedule Appointment { get; private set; }
+        public int ArrivalScore => Appointment == null ? 0 : Appointment.Score;
+        public int Loot { get; private set; }
+        public int LostLoot { get; private set; }
+        public int BankedThisRun { get; private set; }
+        public bool PendingPayout { get; private set; }
+        public bool ShopOpen { get; private set; }
+        public string ShopMessage { get; private set; }
+        public float Elapsed => elapsed;
+        string runId;
+        int runSafeLevel;
+        bool crewShown;
         public Vector3 Objective => State == MissionState.Pickup ? World.Pickup : World.Destination;
         float elapsed, sampleTimer, recoveryCooldown;
         FollowCamera follow;
@@ -29,7 +42,8 @@ namespace Getaway
         void Start()
         {
             World = GetComponent<WorldBuilder>(); Logger = GetComponent<RunLogger>();
-            Progress = ProgressStore.Load();
+            Account = new CareerAccount(ProgressStore.Load(), ProgressStore.Save);
+            ShopMessage = ProgressStore.Status;
             if (stages == null || stages.Length == 0) { Debug.LogError("No stages configured."); enabled = false; return; }
             if (FindAnyObjectByType<Light>() == null)
             {
@@ -50,20 +64,25 @@ namespace Getaway
         }
         public void LoadStage(int index)
         {
-            if (index < 0 || index >= stages.Length) return;
+            if (index < 0 || index >= stages.Length || PendingPayout) return;
             Time.timeScale = 1; Paused = false;
-            StageIndex = index; elapsed = sampleTimer = recoveryCooldown = Boarding = EscapeProgress = ArrestProgress = 0;
+            StageIndex = index; elapsed = sampleTimer = recoveryCooldown = EscapeProgress = ArrestProgress = 0;
             Remaining = Stage.timeLimit; Result = ""; State = MissionState.Briefing;
-            World.Build(Stage);
+            ShopOpen = false; Loot = LostLoot = BankedThisRun = 0; crewShown = false;
+            Appointment = new PickupSchedule(Stage.crewExitTime, Stage.lateGrace, Stage.arrivalScoreWindow, Stage.maxArrivalScore);
+            runId = System.Guid.NewGuid().ToString("N");
+            World.Build(Stage, Account.Selected);
             World.Player.drivingEnabled = false;
             World.Player.Damaged += OnDamage;
+            World.Player.PoliceImpact += OnPoliceImpact;
             follow.target = World.Player.transform;
             follow.transform.position = World.Player.transform.position + new Vector3(0, 6, -10);
             Log("stage_loaded", Stage.title);
         }
         public void Begin()
         {
-            if (State != MissionState.Briefing) return;
+            if (State != MissionState.Briefing || ShopOpen) return;
+            runSafeLevel = Account.Selected.safe;
             State = MissionState.Pickup; World.Player.drivingEnabled = true; Log("stage_start");
         }
         void Update()
@@ -92,10 +111,16 @@ namespace Getaway
             if (player.transform.position.y < -8) { Finish(false, "Vehicle lost."); return; }
             if (State == MissionState.Pickup)
             {
-                Boarding = FlatDistance(player.transform.position, World.Pickup) < 6 && player.Speed < 1.5f ? Boarding + dt : 0;
-                if (Boarding >= 2)
+                bool arrived = Appointment.ArrivalTime >= 0;
+                bool stopped = FlatDistance(player.transform.position, World.Pickup) < 6 && player.Speed < 1.5f;
+                Appointment.Advance(dt, stopped);
+                if (!arrived && Appointment.ArrivalTime >= 0) Log("bank_arrival", $"time={Appointment.ArrivalTime:F2}; score={ArrivalScore}");
+                if (Appointment.CrewAvailable && !crewShown) { crewShown = true; World.ShowCrew(); Log("crew_exit_bank"); }
+                if (Appointment.Missed) { Finish(false, "You missed the crew's pickup deadline."); return; }
+                if (Appointment.Boarded)
                 {
                     World.BoardCrew(); World.SpawnPolice(Stage); State = MissionState.Chase;
+                    Loot = Mathf.Max(0, Stage.startingLoot);
                     Log("crew_boarded", Stage.crewCount.ToString()); Log("pursuit_started");
                 }
                 return;
@@ -122,6 +147,13 @@ namespace Getaway
         }
         public static float FlatDistance(Vector3 a, Vector3 b) { a.y = b.y = 0; return Vector3.Distance(a, b); }
         void OnDamage(float amount, string source) { Log("vehicle_damage", source + ": " + amount.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)); }
+        void OnPoliceImpact(float actualDamage)
+        {
+            if (State != MissionState.Chase && State != MissionState.Escaped) return;
+            int loss = GarageCatalog.CashLoss(Loot, actualDamage, Stage.cashLossPerDamage, runSafeLevel);
+            Loot -= loss; LostLoot += loss;
+            Log("police_cash_loss", $"damage={actualDamage:F2}; loss={loss}; remaining={Loot}");
+        }
         void Finish(bool won, string reason)
         {
             State = won ? MissionState.Won : MissionState.Lost; Result = reason;
@@ -129,18 +161,56 @@ namespace Getaway
             foreach (var cop in World.Police) cop.GetComponent<ArcadeCar>().drivingEnabled = false;
             if (won)
             {
-                Progress.highestUnlocked = Mathf.Max(Progress.highestUnlocked, Mathf.Min(StageIndex + 1, stages.Length - 1));
-                Progress.completedRuns++;
-                bool saved = ProgressStore.Save(Progress); Log(saved ? "progress_saved" : "progress_save_failed");
+                PendingPayout = true;
+                RetryPayout();
             }
             Log(won ? "stage_won" : "stage_lost", reason);
+        }
+        public void RetryPayout()
+        {
+            if (State != MissionState.Won || !PendingPayout) return;
+            long previousWallet = Progress.wallet;
+            bool saved = Account.Settle(runId, Loot, ArrivalScore, Mathf.Min(StageIndex + 1, stages.Length - 1), out string message);
+            PendingPayout = !saved;
+            if (saved) { BankedThisRun = (int)(Progress.wallet - previousWallet); Result = "Crew delivered. Earnings saved."; }
+            else Result = "Could not save earnings. Keep this screen open and retry saving.";
+            ShopMessage = message;
+            Log(saved ? "payout_saved" : "payout_save_failed", $"run={runId}; loot={Loot}; banked={BankedThisRun}; wallet={Progress.wallet}; score={ArrivalScore}");
+        }
+        public void OpenShop()
+        {
+            if (Active || PendingPayout) return;
+            ShopOpen = true; ShopMessage = ProgressStore.ReadOnly ? ProgressStore.Status : "Upgrades apply to the selected car. Purchases are saved immediately.";
+        }
+        public void CloseShop()
+        {
+            ShopOpen = false;
+            if (State == MissionState.Briefing) LoadStage(StageIndex);
+        }
+        public void BuyVehicle(string id)
+        {
+            if (!ShopOpen || Active || PendingPayout) return;
+            bool ok = Account.BuyVehicle(id, out string message); ShopMessage = message;
+            Log(ok ? "vehicle_purchased" : "purchase_rejected", $"vehicle={id}; wallet={Progress.wallet}; {message}");
+        }
+        public void SelectVehicle(string id)
+        {
+            if (!ShopOpen || Active || PendingPayout) return;
+            bool ok = Account.SelectVehicle(id, out string message); ShopMessage = message;
+            Log(ok ? "vehicle_selected" : "selection_rejected", id);
+        }
+        public void BuyUpgrade(UpgradeKind kind)
+        {
+            if (!ShopOpen || Active || PendingPayout) return;
+            bool ok = Account.BuyUpgrade(kind, out string message); ShopMessage = message;
+            Log(ok ? "upgrade_purchased" : "purchase_rejected", $"vehicle={Progress.selectedVehicle}; upgrade={kind}; wallet={Progress.wallet}; {message}");
         }
         public void TogglePause()
         {
             if (!Active) return;
             Paused = !Paused; Time.timeScale = Paused ? 0 : 1; Log(Paused ? "paused" : "resumed");
         }
-        public void Log(string type, string detail = "") { Logger.Write(type, StageIndex + 1, elapsed, World.Player, detail); }
+        public void Log(string type, string detail = "") { Logger.Write(type, StageIndex + 1, elapsed, World.Player, detail, runId, Loot, Progress.wallet, ArrivalScore); }
         void OnDestroy() { Time.timeScale = 1; }
     }
 }
