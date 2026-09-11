@@ -1,0 +1,1037 @@
+From d5efd3b120c5c2fc65bbacc98cc67af6847432ec Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 11 Sep 2026 08:24:07 +0000
+Subject: [PATCH] =?UTF-8?q?feat:=20=EB=B0=94=EB=A6=AC=EC=BC=80=EC=9D=B4?=
+ =?UTF-8?q?=EB=93=9C=20=EB=8F=8C=ED=8C=8C=EC=99=80=20=EB=8F=84=EC=8B=9C=20?=
+ =?UTF-8?q?=ED=83=88=EC=B6=9C=EB=A1=9C=20=EC=9E=84=EB=AC=B4=20=EA=B5=AC?=
+ =?UTF-8?q?=EC=A1=B0=20=EC=9E=AC=EC=84=A4=EA=B3=84?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+세 시스템이 서로를 무너뜨리고 있었다. 전력 주행 도착이 약속 시각보다
+7~12초 빨라 1페이즈가 일부러 천천히 가는 게임이 되었고, 그래서 엔진
+강화가 점수를 깎았다. 경찰은 플레이어와 가속도가 같고 최고속만 낮아
+간격이 벌어지기만 했으므로 현금 손실이 사실상 발동하지 않았다.
+
+은행 도착을 제한시간 방식으로 바꾸고 도로마다 갭이 하나뿐인 경찰
+바리케이드를 세웠다. 점수는 빠를수록 높아지므로 강화가 점수를 올린다.
+강도는 처음부터 은행에서 대기하므로 crewExitTime·lateGrace·
+arrivalScoreWindow를 bankDeadline·arrivalParTime으로 정리했다.
+
+거리 유지로 따돌리는 승리 조건을 없애고, 본선 끝에서 갈라져 도시
+밖으로 뻗는 탈출 도로 끝의 CITY LIMITS 구역 도달을 승리로 삼았다.
+속도 제한이 없어 전속력 통과가 가능하고 본선 끝은 막다른 길이다.
+
+경찰 직선 최고속을 38/46/56으로 올려 최강 차량 풀업그레이드보다
+약간 빠르게 하고 가속도는 9/9.5/10으로 낮췄다. 직선에서는 붙고
+바리케이드 재가속 구간에서 벌어진다. PoliceDriver가 갭 위치를 읽어
+조준하고 제동거리 안에서 감속한다.
+
+검증: 새 규칙을 파이썬으로 포팅해 16개 검사 통과. 도착 시각은 기본
+세단 8.2/10.1/12.2초(829/878/891점), 최강차 7.0/8.6/10.5초(만점),
+서툰 주행 9.8/12.5/15.9초(600/611/555점). 추격은 정상 주행 시
+11~14초에 탈출하고 한 번 멈추면 간격이 40m대에 머문다. 월드 배치와
+심볼 참조도 프로그램으로 검사했다. 컨테이너에 .NET SDK와 C#
+컴파일러를 설치할 수 없어 컴파일과 Play Mode는 PC 확인이 필요하다.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01GArgS6bCQqq7V53d82kV6G
+---
+ Assets/Getaway/Editor/ProjectSetup.cs     |  20 ++--
+ Assets/Getaway/Editor/SmokeTests.cs       |  32 +++---
+ Assets/Getaway/Scripts/CareerRules.cs     |  31 ++++--
+ Assets/Getaway/Scripts/GameHud.cs         |  16 +--
+ Assets/Getaway/Scripts/GameSession.cs     |  56 ++++++-----
+ Assets/Getaway/Scripts/PoliceDriver.cs    |  42 ++++++--
+ Assets/Getaway/Scripts/StageDefinition.cs |  36 +++++--
+ Assets/Getaway/Scripts/WorldBuilder.cs    | 114 ++++++++++++++++++----
+ Assets/Getaway/Stages/Stage01.asset       |  19 ++--
+ Assets/Getaway/Stages/Stage02.asset       |  19 ++--
+ Assets/Getaway/Stages/Stage03.asset       |  19 ++--
+ Docs/CAREER_GAMEPLAY.md                   |  24 +++--
+ Docs/DEVLOG.md                            |  14 +++
+ README.md                                 |  42 ++++----
+ Tests/CareerRules.Tests/Program.cs        |  58 +++++++----
+ 15 files changed, 369 insertions(+), 173 deletions(-)
+
+diff --git a/Assets/Getaway/Editor/ProjectSetup.cs b/Assets/Getaway/Editor/ProjectSetup.cs
+index 48763ea..8b6fa49 100644
+--- a/Assets/Getaway/Editor/ProjectSetup.cs
++++ b/Assets/Getaway/Editor/ProjectSetup.cs
+@@ -30,10 +30,14 @@ namespace Getaway.Editor
+             session.stages = new StageDefinition[3];
+             string[] titles = { "The First Job", "Downtown Heat", "The Last Ride" };
+             string[] briefs = {
+-                "You are the crew's driver. Collect three members outside the bank, lose the patrol cars, and bring everyone to the safehouse.",
+-                "The next job has drawn more attention. Four crew members need a ride through the downtown roadworks. Keep the car intact.",
+-                "One final getaway. The whole crew is counting on you. Break away from four patrol cars and reach the distant hideout."
++                "Patrol cars are already setting up barricades. Punch through to the bank, load the crew, and run for the city limits.",
++                "Downtown is locked down and the patrols are quicker. Thread the barricades, take the haul, and do not let them pin you.",
++                "Every unit in the city is out and their interceptors are faster than anything in your garage. Drive clean or drive home broke."
+             };
++            // Patrol top speeds sit just above the quickest fully upgraded car, but their
++            // acceleration is well below it, so ground is won and lost at every barricade.
++            float[] policeSpeeds = { 38, 46, 56 }, policeAccels = { 9, 9.5f, 10 };
++            float[] deadlines = { 14, 18, 22 }, pars = { 7, 9, 11 }, gaps = { 8, 7, 6.5f };
+             for (int i = 0; i < 3; i++)
+             {
+                 string path = $"Assets/Getaway/Stages/Stage{i + 1:00}.asset";
+@@ -42,10 +46,12 @@ namespace Getaway.Editor
+                 {
+                     stage = ScriptableObject.CreateInstance<StageDefinition>();
+                     stage.title = titles[i]; stage.briefing = briefs[i]; stage.roadLength = 650 + i * 200;
+-                    stage.timeLimit = 100 + i * 20; stage.policeCount = 2 + i; stage.policeSpeed = 24 + i * 2;
+-                    stage.escapeDistance = 65 + i * 5; stage.escapeSeconds = 5 + i;
+-                    stage.crewCount = 3 + i; stage.seed = 17 + i * 11;
+-                    stage.bankDistance = 180 + i * 60; stage.crewExitTime = 14 + i * 4;
++                    stage.timeLimit = 100 + i * 20; stage.crewCount = 3 + i; stage.seed = 17 + i * 11;
++                    stage.policeCount = 2 + i; stage.policeSpeed = policeSpeeds[i]; stage.policeAcceleration = policeAccels[i];
++                    stage.bankDistance = 180 + i * 60; stage.bankDeadline = deadlines[i]; stage.arrivalParTime = pars[i];
++                    stage.maxArrivalScore = 1000;
++                    stage.firstRoadblock = 55; stage.roadblockSpacing = 55 - i; stage.roadblockGap = gaps[i];
++                    stage.exitJunctionOffset = 120 + i * 10; stage.exitRoadLength = 170 + i * 20;
+                     stage.startingLoot = 12000 + i * 6000; stage.cashLossPerDamage = 120 + i * 60;
+                     AssetDatabase.CreateAsset(stage, path);
+                 }
+diff --git a/Assets/Getaway/Editor/SmokeTests.cs b/Assets/Getaway/Editor/SmokeTests.cs
+index 1138083..18d941d 100644
+--- a/Assets/Getaway/Editor/SmokeTests.cs
++++ b/Assets/Getaway/Editor/SmokeTests.cs
+@@ -76,8 +76,8 @@ namespace Getaway.Editor
+         }
+         static void BoardNow(GameSession game)
+         {
++            // The crew waits inside the bank from the start, so stopping there is enough.
+             Teleport(game.World.Player, game.World.Pickup);
+-            game.Tick(Mathf.Max(0.01f, game.Stage.crewExitTime - game.Elapsed + 0.01f));
+             game.Tick(2.1f);
+         }
+         static IEnumerator Verify()
+@@ -94,10 +94,13 @@ namespace Getaway.Editor
+             car.Body.linearVelocity = Vector3.forward * 5;
+             game.Tick(2.1f);
+             Check(game.State == MissionState.Pickup, "Cannot board while driving fast");
+-            car.Body.linearVelocity = Vector3.zero; game.Tick(0.1f);
+-            Check(!game.Appointment.CrewAvailable && game.Loot == 0 && game.World.Police.Count == 0, "No crew, loot or pursuit before scheduled bank exit");
++            Teleport(car, game.World.Destination); game.Tick(0.1f);
++            Check(game.State == MissionState.Pickup && game.Loot == 0 && game.World.Police.Count == 0,
++                "City limits cannot be claimed before the crew is aboard");
++            Teleport(car, game.World.Pickup); game.Tick(0.1f);
+             int earlyScore = game.ArrivalScore;
+-            BoardNow(game);
++            Check(earlyScore == game.Stage.maxArrivalScore, "Beating par time pays the full arrival score");
++            game.Tick(2.1f);
+             Check(game.ArrivalScore == earlyScore, "Waiting at bank preserves first-arrival score");
+             Check(game.State == MissionState.Chase && game.World.Police.Count == 2, "Boarding triggers pursuit");
+             int cash = game.Loot;
+@@ -105,20 +108,17 @@ namespace Getaway.Editor
+             Check(game.Loot == cash, "Environment damage does not deduct money");
+             car.ApplyDamage(10, "police", true);
+             Check(game.Loot == cash - 1200 && game.LostLoot == 1200, "Police damage event deducts proportional money");
+-            Teleport(car, game.World.Destination); game.Tick(0.1f);
+-            Check(game.State == MissionState.Chase, "Destination blocked while wanted");
+-            Teleport(car, game.World.Pickup + Vector3.forward * 160); game.Tick(2);
++            Teleport(car, game.World.Destination + Vector3.left * 40); game.Tick(0.1f);
++            Check(game.State == MissionState.Chase, "Short of the city limits the run continues");
+             var cop = game.World.Police[0].GetComponent<ArcadeCar>();
+-            Teleport(cop, car.transform.position + Vector3.right * 10); game.Tick(0.1f);
+-            Check(game.EscapeProgress == 0, "Escape countdown resets when police approach");
+-            Teleport(cop, new Vector3(4, 0.8f, -5)); game.Tick(game.Stage.escapeSeconds + 0.1f);
+-            Check(game.State == MissionState.Escaped, "Sustained separation evades police");
+-            Teleport(car, game.World.Destination); car.Body.linearVelocity = Vector3.forward * 5; game.Tick(0.1f);
+-            Check(game.State == MissionState.Escaped, "Must stop at destination");
+-            car.Body.linearVelocity = Vector3.zero; game.Tick(0.1f);
+-            Check(game.State == MissionState.Won && ProgressStore.Load().highestUnlocked >= 1, "Delivery wins and persists unlock");
++            Teleport(cop, new Vector3(4, 0.8f, 5)); game.Tick(0.1f);
++            Check(game.State == MissionState.Chase, "Losing the patrols is not by itself a win");
++            int carried = game.Loot;
++            Teleport(car, game.World.Destination); car.Body.linearVelocity = Vector3.right * 20; game.Tick(0.1f);
++            Check(game.State == MissionState.Won && ProgressStore.Load().highestUnlocked >= 1,
++                "Crossing the city limits at speed wins and persists unlock");
+             long wallet = game.Progress.wallet;
+-            Check(wallet == game.Loot && !game.PendingPayout, "Escaped cash is banked once");
++            Check(wallet == carried && !game.PendingPayout, "Rescued cash is banked once");
+             game.RetryPayout(); game.Tick(1);
+             Check(game.Progress.wallet == wallet, "Repeated result updates cannot duplicate payout");
+             game.OpenShop(); game.BuyUpgrade(UpgradeKind.Engine); game.CloseShop();
+diff --git a/Assets/Getaway/Scripts/CareerRules.cs b/Assets/Getaway/Scripts/CareerRules.cs
+index d54143b..718569d 100644
+--- a/Assets/Getaway/Scripts/CareerRules.cs
++++ b/Assets/Getaway/Scripts/CareerRules.cs
+@@ -4,6 +4,8 @@ using System.Collections.Generic;
+ namespace Getaway
+ {
+     // These production rules are also tested without an editor or a graphics device.
++    // The crew waits inside the bank from the start: the job is to beat the police roadblocks
++    // there before the deadline, and arriving sooner is always worth more.
+     public sealed class PickupSchedule
+     {
+         public double Elapsed { get; private set; }
+@@ -12,28 +14,37 @@ namespace Getaway
+         public double Boarding { get; private set; }
+         public bool Boarded { get; private set; }
+         public bool Missed { get; private set; }
+-        public bool CrewAvailable => Elapsed >= Target;
+-        public readonly double Target, Grace, ScoreWindow, BoardingSeconds;
++        public readonly double Deadline, ParTime, BoardingSeconds;
+         public readonly int MaxScore;
+-        public PickupSchedule(double target, double grace, double window, int maxScore, double boardingSeconds = 2)
++        public double Remaining => Math.Max(0, Deadline - Elapsed);
++        public PickupSchedule(double deadline, double parTime, int maxScore, double boardingSeconds = 2)
+         {
+-            Target = Math.Max(1, target); Grace = Math.Max(3, grace);
+-            ScoreWindow = Math.Max(0.1, window); MaxScore = Math.Max(0, maxScore);
++            Deadline = Math.Max(1, deadline);
++            ParTime = Math.Max(0, Math.Min(parTime, Deadline - 0.1));
++            MaxScore = Math.Max(0, maxScore);
+             BoardingSeconds = Math.Max(0.1, boardingSeconds);
+         }
++        // Full marks at or under par, sliding to nothing at the deadline. Faster is never punished,
++        // so engine upgrades buy score instead of costing it.
++        public static int ScoreFor(double arrival, double deadline, double parTime, int maxScore)
++        {
++            if (arrival < 0 || arrival > deadline) return 0;
++            if (deadline <= parTime) return maxScore;
++            double fraction = (deadline - arrival) / (deadline - parTime);
++            return (int)Math.Round(maxScore * Math.Max(0, Math.Min(1, fraction)), MidpointRounding.AwayFromZero);
++        }
+         public void Advance(double dt, bool stoppedAtBank)
+         {
+             if (Boarded || Missed || dt <= 0 || double.IsNaN(dt) || double.IsInfinity(dt)) return;
+-            double before = Elapsed; Elapsed += dt;
++            Elapsed += dt;
+             if (stoppedAtBank && ArrivalTime < 0)
+             {
+                 ArrivalTime = Elapsed;
+-                Score = (int)Math.Round(MaxScore * Math.Max(0, 1 - Math.Abs(ArrivalTime - Target) / ScoreWindow), MidpointRounding.AwayFromZero);
++                Score = ScoreFor(ArrivalTime, Deadline, ParTime, MaxScore);
+             }
+-            if (!stoppedAtBank) Boarding = 0;
+-            else Boarding += Math.Max(0, Math.Min(Elapsed, Target + Grace) - Math.Max(before, Target));
++            Boarding = stoppedAtBank ? Boarding + dt : 0;
+             if (Boarding + 0.000001 >= BoardingSeconds) Boarded = true;
+-            else if (Elapsed >= Target + Grace) Missed = true;
++            else if (Elapsed >= Deadline) Missed = true;
+         }
+     }
+     [Serializable]
+diff --git a/Assets/Getaway/Scripts/GameHud.cs b/Assets/Getaway/Scripts/GameHud.cs
+index 862cbcd..dbc907a 100644
+--- a/Assets/Getaway/Scripts/GameHud.cs
++++ b/Assets/Getaway/Scripts/GameHud.cs
+@@ -41,17 +41,17 @@ namespace Getaway
+             if (game.State == MissionState.Pickup)
+             {
+                 var a = game.Appointment;
+-                string timing = a.CrewAvailable ? $"Crew is out! Depart before {a.Target + a.Grace:0}s." : $"Crew exits in {a.Target - a.Elapsed:0.0}s (appointment {a.Target:0}s).";
+-                Label(40, 568, 930, 30, timing, text);
+-                string score = a.ArrivalTime < 0 ? "First stop in the BLUE bank zone locks your timing score." : $"Arrival {a.ArrivalTime:0.00}s / target {a.Target:0.00}s  —  {a.Score} points (locked)";
++                Label(40, 568, 930, 30, $"Beat the roadblocks to the BLUE bank zone and board:  {a.Remaining:0.0}s left of {a.Deadline:0}s", text);
++                string score = a.ArrivalTime < 0
++                    ? $"Arrive by {a.ParTime:0}s for the full {a.MaxScore} points. Every second after that is worth less."
++                    : $"Arrived {a.ArrivalTime:0.00}s  —  {a.Score} / {a.MaxScore} points (locked)";
+                 Label(40, 609, 930, 30, score, small);
+-                Label(40, 650, 930, 30, $"Stay stopped to board after the crew exits: {game.Boarding:0.0} / 2.0s", small);
++                Label(40, 650, 930, 30, $"Hold still in the zone to load the crew: {game.Boarding:0.0} / 2.0s", small);
+             }
+             else
+             {
+-                string goal = game.State == MissionState.Chase ? $"Lose the police: stay {game.Stage.escapeDistance:0}m ahead for {game.Stage.escapeSeconds:0}s." : "Police evaded. Stop in the GREEN safehouse zone to bank the cash.";
+-                Label(40, 568, 930, 60, goal, text);
+-                Label(40, 630, 930, 50, $"Escape {game.EscapeProgress:0.0}s   Arrest {game.ArrestProgress:0.0} / 4s   Police damage reduces carried money.", small);
++                Label(40, 568, 930, 60, "Run for the GREEN city limits on the exit road. Reach it with the car intact and the cash is yours.", text);
++                Label(40, 630, 930, 50, $"Nearest patrol {(float.IsInfinity(game.NearestPolice) ? 0 : game.NearestPolice):0}m   Boxed in {game.ArrestProgress:0.0} / 4s   Every police hit costs money.", small);
+             }
+             Vector3 local = game.World.Player.transform.InverseTransformPoint(game.Objective);
+             string direction = local.z < 0 ? "TURN BACK" : Mathf.Abs(local.x) < 5 ? "AHEAD" : local.x < 0 ? "LEFT" : "RIGHT";
+@@ -73,7 +73,7 @@ namespace Getaway
+             if (game.State == MissionState.Briefing)
+             {
+                 Label(320, 242, 640, 60, game.Stage.briefing, text);
+-                Label(320, 315, 640, 62, $"Crew exits at {game.Stage.crewExitTime:0}s. Finish boarding by {game.Stage.crewExitTime + game.Stage.lateGrace:0}s.\nPotential haul: ${game.Stage.startingLoot:N0}. Timing: up to {game.Stage.maxArrivalScore} points.", small);
++                Label(320, 315, 640, 62, $"Board at the bank within {game.Stage.bankDeadline:0}s; under {game.Stage.arrivalParTime:0}s pays the full {game.Stage.maxArrivalScore} points.\nHaul ${game.Stage.startingLoot:N0}, then reach the city limits before the patrols wreck you.", small);
+                 if (Button(320, 390, 640, 44, "Start job")) game.Begin();
+             }
+             else
+diff --git a/Assets/Getaway/Scripts/GameSession.cs b/Assets/Getaway/Scripts/GameSession.cs
+index 970696a..38475af 100644
+--- a/Assets/Getaway/Scripts/GameSession.cs
++++ b/Assets/Getaway/Scripts/GameSession.cs
+@@ -2,7 +2,7 @@ using UnityEngine;
+ 
+ namespace Getaway
+ {
+-    public enum MissionState { Briefing, Pickup, Chase, Escaped, Won, Lost }
++    public enum MissionState { Briefing, Pickup, Chase, Won, Lost }
+ 
+     [RequireComponent(typeof(WorldBuilder), typeof(RunLogger))]
+     public sealed class GameSession : MonoBehaviour
+@@ -13,14 +13,15 @@ namespace Getaway
+         public bool Paused { get; private set; }
+         public float Remaining { get; private set; }
+         public float Boarding => Appointment == null ? 0 : (float)Appointment.Boarding;
+-        public float EscapeProgress { get; private set; }
+         public float ArrestProgress { get; private set; }
+         public float NearestPolice { get; private set; }
+         public string Result { get; private set; }
+         public WorldBuilder World { get; private set; }
+         public RunLogger Logger { get; private set; }
+         public StageDefinition Stage => stages[StageIndex];
+-        public bool Active => State == MissionState.Pickup || State == MissionState.Chase || State == MissionState.Escaped;
++        public bool Active => State == MissionState.Pickup || State == MissionState.Chase;
++        /// <summary>Radius of the city-limits zone that ends a successful run.</summary>
++        public const float EscapeRadius = 10;
+         public CareerAccount Account { get; private set; }
+         public CareerData Progress => Account.Data;
+         public PickupSchedule Appointment { get; private set; }
+@@ -34,8 +35,21 @@ namespace Getaway
+         public float Elapsed => elapsed;
+         string runId;
+         int runSafeLevel;
+-        bool crewShown;
+-        public Vector3 Objective => State == MissionState.Pickup ? World.Pickup : World.Destination;
++        // The exit line sits off to one side, so steering the player at it from the far end of the
++        // main road would read as "turn right" for the whole run. Aim at the junction until the
++        // car is actually in the mouth of the escape road.
++        public Vector3 Objective
++        {
++            get
++            {
++                if (World == null || World.Player == null) return Vector3.zero;
++                if (State == MissionState.Pickup) return World.Pickup;
++                float z = World.Player.transform.position.z;
++                return z < World.JunctionZ - WorldBuilder.JunctionHalfWidth
++                    ? new Vector3(0, World.Destination.y, World.JunctionZ)
++                    : World.Destination;
++            }
++        }
+         float elapsed, sampleTimer, recoveryCooldown;
+         FollowCamera follow;
+ 
+@@ -66,10 +80,10 @@ namespace Getaway
+         {
+             if (index < 0 || index >= stages.Length || PendingPayout) return;
+             Time.timeScale = 1; Paused = false;
+-            StageIndex = index; elapsed = sampleTimer = recoveryCooldown = EscapeProgress = ArrestProgress = 0;
++            StageIndex = index; elapsed = sampleTimer = recoveryCooldown = ArrestProgress = 0;
+             Remaining = Stage.timeLimit; Result = ""; State = MissionState.Briefing;
+-            ShopOpen = false; Loot = LostLoot = BankedThisRun = 0; crewShown = false;
+-            Appointment = new PickupSchedule(Stage.crewExitTime, Stage.lateGrace, Stage.arrivalScoreWindow, Stage.maxArrivalScore);
++            ShopOpen = false; Loot = LostLoot = BankedThisRun = 0;
++            Appointment = new PickupSchedule(Stage.bankDeadline, Stage.arrivalParTime, Stage.maxArrivalScore);
+             runId = System.Guid.NewGuid().ToString("N");
+             World.Build(Stage, Account.Selected);
+             World.Player.drivingEnabled = false;
+@@ -115,8 +129,7 @@ namespace Getaway
+                 bool stopped = FlatDistance(player.transform.position, World.Pickup) < 6 && player.Speed < 1.5f;
+                 Appointment.Advance(dt, stopped);
+                 if (!arrived && Appointment.ArrivalTime >= 0) Log("bank_arrival", $"time={Appointment.ArrivalTime:F2}; score={ArrivalScore}");
+-                if (Appointment.CrewAvailable && !crewShown) { crewShown = true; World.ShowCrew(); Log("crew_exit_bank"); }
+-                if (Appointment.Missed) { Finish(false, "You missed the crew's pickup deadline."); return; }
++                if (Appointment.Missed) { Finish(false, "Too slow. The crew was arrested at the bank."); return; }
+                 if (Appointment.Boarded)
+                 {
+                     World.BoardCrew(); World.SpawnPolice(Stage); State = MissionState.Chase;
+@@ -129,27 +142,18 @@ namespace Getaway
+             foreach (var cop in World.Police)
+                 if (cop != null && cop.GetComponent<ArcadeCar>().health > 0)
+                     NearestPolice = Mathf.Min(NearestPolice, FlatDistance(player.transform.position, cop.transform.position));
+-            if (State == MissionState.Chase)
+-            {
+-                EscapeProgress = NearestPolice > Stage.escapeDistance ? EscapeProgress + dt : 0;
+-                ArrestProgress = NearestPolice < 7 && player.Speed < 2 ? ArrestProgress + dt : Mathf.Max(0, ArrestProgress - dt * 2);
+-                if (ArrestProgress >= 4) { Finish(false, "Busted. Police surrounded the vehicle."); return; }
+-                if (EscapeProgress >= Stage.escapeSeconds)
+-                {
+-                    State = MissionState.Escaped;
+-                    foreach (var cop in World.Police) cop.searching = true;
+-                    Log("pursuit_evaded");
+-                }
+-            }
+-            // Escaped is latched for this arcade prototype; further waves are a future extension.
+-            if (State == MissionState.Escaped && FlatDistance(player.transform.position, World.Destination) < 7 && player.Speed < 2)
+-                Finish(true, "Crew delivered safely.");
++            // The patrols never give up. Getting out is about reaching the city limits intact,
++            // so crossing the line at speed counts: no stopping next to a police car required.
++            ArrestProgress = NearestPolice < 7 && player.Speed < 2 ? ArrestProgress + dt : Mathf.Max(0, ArrestProgress - dt * 2);
++            if (ArrestProgress >= 4) { Finish(false, "Busted. Police boxed the vehicle in."); return; }
++            if (FlatDistance(player.transform.position, World.Destination) < EscapeRadius)
++                Finish(true, "Out of the city. The crew is clear.");
+         }
+         public static float FlatDistance(Vector3 a, Vector3 b) { a.y = b.y = 0; return Vector3.Distance(a, b); }
+         void OnDamage(float amount, string source) { Log("vehicle_damage", source + ": " + amount.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)); }
+         void OnPoliceImpact(float actualDamage)
+         {
+-            if (State != MissionState.Chase && State != MissionState.Escaped) return;
++            if (State != MissionState.Chase) return;
+             int loss = GarageCatalog.CashLoss(Loot, actualDamage, Stage.cashLossPerDamage, runSafeLevel);
+             Loot -= loss; LostLoot += loss;
+             Log("police_cash_loss", $"damage={actualDamage:F2}; loss={loss}; remaining={Loot}");
+diff --git a/Assets/Getaway/Scripts/PoliceDriver.cs b/Assets/Getaway/Scripts/PoliceDriver.cs
+index 220c54c..3bac75b 100644
+--- a/Assets/Getaway/Scripts/PoliceDriver.cs
++++ b/Assets/Getaway/Scripts/PoliceDriver.cs
+@@ -6,7 +6,10 @@ namespace Getaway
+     public sealed class PoliceDriver : MonoBehaviour
+     {
+         public ArcadeCar target;
+-        public bool searching;
++        public WorldBuilder world;
++        [Tooltip("Speed in m/s a patrol tries to be down to before threading a barricade gap.")]
++        public float threadSpeed = 22;
++
+         ArcadeCar car;
+         float stuck;
+         float reverseUntil;
+@@ -17,24 +20,45 @@ namespace Getaway
+         void FixedUpdate()
+         {
+             if (target == null || !car.drivingEnabled) return;
+-            if (searching) { car.Throttle = 0; car.Steering = 0; car.Braking = true; return; }
++            Vector3 position = transform.position;
+             Vector3 aim = target.transform.position + target.Body.linearVelocity * 0.35f;
++            bool threading = false, slowForBlock = false;
++
++            // A barricade line ahead outranks the chase: thread its gap or wear the wall.
++            if (world != null && world.NextRoadblock(position.z, out float blockZ, out float gapX))
++            {
++                float distance = blockZ - position.z;
++                // Braking distance under the arcade brake model, plus room to line up with the gap.
++                float slowZone = Mathf.Max(12, (car.Speed - threadSpeed) / 4.5f + 14);
++                if (distance > 0 && distance < slowZone + 55)
++                {
++                    // Aiming past the line keeps a forward component as the gap is swallowed.
++                    aim = new Vector3(gapX, position.y, blockZ + 8);
++                    threading = true;
++                    slowForBlock = distance < slowZone && car.Speed > threadSpeed;
++                }
++            }
++
+             Vector3 local = transform.InverseTransformPoint(aim);
+             float angle = Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg;
+             float steer = Mathf.Clamp(angle / 35, -1, 1);
+-            Vector3 origin = transform.position + transform.forward * 2.6f;
+-            if (Physics.SphereCast(origin, 0.75f, transform.forward, out RaycastHit hit, 7 + car.Speed * 0.22f, 1, QueryTriggerInteraction.Ignore))
++            // Blind avoidance only helps where there is no better information; the gap aim is better.
++            if (!threading)
+             {
+-                Vector3 obstacle = transform.InverseTransformPoint(hit.collider.bounds.center);
+-                avoidanceDirection = obstacle.x >= 0 ? -1 : 1;
+-                steer = avoidanceDirection;
++                Vector3 origin = position + transform.forward * 2.6f;
++                if (Physics.SphereCast(origin, 0.75f, transform.forward, out RaycastHit hit, 7 + car.Speed * 0.22f, 1, QueryTriggerInteraction.Ignore))
++                {
++                    Vector3 obstacle = transform.InverseTransformPoint(hit.collider.bounds.center);
++                    avoidanceDirection = obstacle.x >= 0 ? -1 : 1;
++                    steer = avoidanceDirection;
++                }
+             }
+             stuck = car.Speed < 1.5f ? stuck + Time.fixedDeltaTime : 0;
+             if (stuck > 1.8f) { reverseUntil = Time.time + 1.4f; stuck = 0; }
+             bool reverse = Time.time < reverseUntil;
+-            car.Throttle = reverse ? -1 : 1;
++            car.Throttle = reverse ? -1 : slowForBlock ? 0 : 1;
+             car.Steering = reverse ? -avoidanceDirection : steer;
+-            car.Braking = !reverse && Mathf.Abs(angle) > 65 && car.Speed > 9;
++            car.Braking = !reverse && (slowForBlock || (Mathf.Abs(angle) > 65 && car.Speed > 9));
+         }
+     }
+ }
+diff --git a/Assets/Getaway/Scripts/StageDefinition.cs b/Assets/Getaway/Scripts/StageDefinition.cs
+index 1b45176..38317c5 100644
+--- a/Assets/Getaway/Scripts/StageDefinition.cs
++++ b/Assets/Getaway/Scripts/StageDefinition.cs
+@@ -6,21 +6,39 @@ namespace Getaway
+     public sealed class StageDefinition : ScriptableObject
+     {
+         public string title = "The First Job";
+-        [TextArea] public string briefing = "Collect your crew and reach the safehouse.";
++        [TextArea] public string briefing = "Beat the roadblocks to the bank, then run the crew out of the city.";
+         [Min(200)] public float roadLength = 650;
+         [Min(30)] public float timeLimit = 100;
+-        [Range(1, 6)] public int policeCount = 2;
+-        [Range(12, 35)] public float policeSpeed = 25;
+-        [Min(20)] public float escapeDistance = 65;
+-        [Min(1)] public float escapeSeconds = 5;
+         [Range(1, 6)] public int crewCount = 3;
+         public int seed = 17;
+-        [Header("Bank appointment")]
++
++        [Header("Police")]
++        [Range(1, 6)] public int policeCount = 2;
++        [Tooltip("Straight-line top speed in m/s. Set this slightly above the fastest fully upgraded car so patrols stay a threat.")]
++        [Range(12, 80)] public float policeSpeed = 38;
++        [Tooltip("Patrol acceleration in m/s^2. Keep it below the player's so they lose ground out of every roadblock.")]
++        [Range(4, 20)] public float policeAcceleration = 9;
++
++        [Header("Bank deadline")]
+         [Min(40)] public float bankDistance = 180;
+-        [Min(1)] public float crewExitTime = 14;
+-        [Min(3)] public float lateGrace = 12;
+-        [Min(1)] public float arrivalScoreWindow = 10;
++        [Tooltip("Seconds allowed to finish boarding at the bank. Missing it fails the job.")]
++        [Min(2)] public float bankDeadline = 14;
++        [Tooltip("Arriving at or before this time scores full marks. Score falls to zero at the deadline.")]
++        [Min(1)] public float arrivalParTime = 7;
+         [Min(0)] public int maxArrivalScore = 1000;
++
++        [Header("Roadblocks")]
++        [Min(20)] public float firstRoadblock = 55;
++        [Min(25)] public float roadblockSpacing = 55;
++        [Tooltip("Width in metres of the one gap left open in each barricade line.")]
++        [Range(5, 16)] public float roadblockGap = 7;
++
++        [Header("Escape route")]
++        [Tooltip("Distance back from the end of the main road where the highway out of the city branches off.")]
++        [Min(40)] public float exitJunctionOffset = 120;
++        [Tooltip("How far the escape road runs out of the city, measured from the main road's edge.")]
++        [Min(60)] public float exitRoadLength = 170;
++
+         [Header("Stolen money")]
+         [Min(0)] public int startingLoot = 12000;
+         [Min(0)] public float cashLossPerDamage = 120;
+diff --git a/Assets/Getaway/Scripts/WorldBuilder.cs b/Assets/Getaway/Scripts/WorldBuilder.cs
+index e75c668..78c7c37 100644
+--- a/Assets/Getaway/Scripts/WorldBuilder.cs
++++ b/Assets/Getaway/Scripts/WorldBuilder.cs
+@@ -10,15 +10,34 @@ namespace Getaway
+         public GameObject vanVisualPrefab;
+         public GameObject policeVisualPrefab;
+         public GameObject crewVisualPrefab;
++
++        // Half width of the drivable surface. Boundary walls sit one metre outside it.
++        public const float RoadHalfWidth = 16;
++        // Half width in z of the mouth where the escape road leaves the city.
++        public const float JunctionHalfWidth = 16;
++
+         public Vector3 Pickup { get; private set; }
+         public Vector3 Destination { get; private set; }
++        /// <summary>Centre of the junction where the escape road branches off the main road.</summary>
++        public float JunctionZ { get; private set; }
+         public ArcadeCar Player { get; private set; }
+         public readonly List<PoliceDriver> Police = new List<PoliceDriver>();
++        // x is the barricade line's z position, y is the x centre of its open gap.
++        readonly List<Vector2> roadblocks = new List<Vector2>();
+         readonly List<GameObject> crew = new List<GameObject>();
+         readonly List<Material> materials = new List<Material>();
+         GameObject root;
+         PhysicsMaterial slippery;
+ 
++        /// <summary>First barricade line ahead of z, so drivers can aim at its gap instead of the wall.</summary>
++        public bool NextRoadblock(float z, out float blockZ, out float gapX)
++        {
++            blockZ = gapX = 0;
++            for (int i = 0; i < roadblocks.Count; i++)
++                if (roadblocks[i].x > z) { blockZ = roadblocks[i].x; gapX = roadblocks[i].y; return true; }
++            return false;
++        }
++
+         Material Material(Color color)
+         {
+             // Resources keeps the shader in standalone builds despite procedural geometry.
+@@ -40,6 +59,18 @@ namespace Getaway
+             if (!solid) { obj.GetComponent<Collider>().enabled = false; Destroy(obj.GetComponent<Collider>()); }
+             return obj;
+         }
++        // Spans are clipped to nothing when an opening swallows them, which is how the boundary
++        // wall and each barricade line get their gaps without special cases at the call site.
++        void ZSpan(string label, float x, float y, float from, float to, float width, float height, Material mat, bool solid = true)
++        {
++            if (to - from <= 0.2f) return;
++            Box(label, root.transform, new Vector3(x, y, (from + to) / 2), new Vector3(width, height, to - from), mat, solid);
++        }
++        void XSpan(string label, float z, float y, float from, float to, float depth, float height, Material mat, bool solid = true)
++        {
++            if (to - from <= 0.2f) return;
++            Box(label, root.transform, new Vector3((from + to) / 2, y, z), new Vector3(to - from, height, depth), mat, solid);
++        }
+ 
+         public void Build(StageDefinition stage, OwnedVehicle loadout = null)
+         {
+@@ -53,41 +84,61 @@ namespace Getaway
+             var orange = Material(new Color(0.93f, 0.30f, 0.09f));
+             var green = Material(new Color(0.17f, 0.78f, 0.52f));
+             var blue = Material(new Color(0.10f, 0.55f, 0.9f));
++            var barrier = Material(new Color(0.95f, 0.82f, 0.16f));
++
+             float length = stage.roadLength;
+-            Pickup = new Vector3(0, 0.65f, Mathf.Clamp(stage.bankDistance, 40, length - 100));
+-            Destination = new Vector3(0, 0.65f, length - 25);
++            Pickup = new Vector3(0, 0.65f, Mathf.Clamp(stage.bankDistance, 40, length - 160));
++            JunctionZ = Mathf.Clamp(length - stage.exitJunctionOffset, Pickup.z + 90, length - 40);
++            float exitEndX = RoadHalfWidth + stage.exitRoadLength;
++            Destination = new Vector3(exitEndX - 22, 0.65f, JunctionZ);
+             slippery = new PhysicsMaterial("Arcade car surface") { dynamicFriction = 0, staticFriction = 0, frictionCombine = PhysicsMaterialCombine.Minimum, bounciness = 0 };
++
+             Box("Ground", root.transform, new Vector3(0, -0.6f, length / 2), new Vector3(160, 1, length + 160), ground);
+-            Box("Road", root.transform, new Vector3(0, -0.1f, length / 2), new Vector3(32, 0.2f, length + 100), road);
++            Box("Road", root.transform, new Vector3(0, -0.1f, length / 2), new Vector3(RoadHalfWidth * 2, 0.2f, length + 100), road);
++
++            // Escape road: the highway out of the city, leaving the right-hand side near the top of the map.
++            float mouth0 = JunctionZ - JunctionHalfWidth, mouth1 = JunctionZ + JunctionHalfWidth;
++            XSpan("Exit ground", JunctionZ, -0.6f, RoadHalfWidth, exitEndX + 50, JunctionHalfWidth * 2 + 90, 1, ground);
++            XSpan("Exit road", JunctionZ, -0.1f, RoadHalfWidth - 2, exitEndX, JunctionHalfWidth * 2, 0.2f, road);
+             for (int side = -1; side <= 1; side += 2)
+-            {
+-                Box("Road boundary", root.transform, new Vector3(side * 17, 1, length / 2), new Vector3(1, 2, length + 100), building);
+-                Box("Edge stripe", root.transform, new Vector3(side * 15, 0.02f, length / 2), new Vector3(0.15f, 0.02f, length + 90), line, false);
+-            }
++                XSpan("Exit boundary", JunctionZ + side * (JunctionHalfWidth + 1), 1, RoadHalfWidth, exitEndX + 6, 1, 2, building);
++            Box("City limits gate", root.transform, new Vector3(exitEndX + 5, 1, JunctionZ), new Vector3(1, 2, JunctionHalfWidth * 2), building);
++
++            // Main road boundaries. The right-hand wall opens only at the junction mouth.
++            ZSpan("Road boundary", -17, 1, -50, length + 50, 1, 2, building);
++            ZSpan("Road boundary", 17, 1, -50, mouth0, 1, 2, building);
++            ZSpan("Road boundary", 17, 1, mouth1, length + 50, 1, 2, building);
++            ZSpan("Edge stripe", -15, 0.02f, -45, length + 45, 0.15f, 0.02f, line, false);
++            ZSpan("Edge stripe", 15, 0.02f, -45, mouth0, 0.15f, 0.02f, line, false);
++            ZSpan("Edge stripe", 15, 0.02f, mouth1, length + 45, 0.15f, 0.02f, line, false);
+             Box("End barrier", root.transform, new Vector3(0, 1, length + 45), new Vector3(35, 2, 1), building);
+             Box("Start barrier", root.transform, new Vector3(0, 1, -48), new Vector3(35, 2, 1), building);
+             for (int z = -30; z < length + 35; z += 12)
+                 Box("Lane marking", root.transform, new Vector3(0, 0.025f, z), new Vector3(0.2f, 0.03f, 5), line, false);
++            for (float x = RoadHalfWidth + 10; x < exitEndX - 6; x += 12)
++                Box("Exit lane marking", root.transform, new Vector3(x, 0.025f, JunctionZ), new Vector3(5, 0.03f, 0.2f), line, false);
++
+             var rng = new System.Random(stage.seed);
+             for (int z = 0; z < length; z += 28)
+                 for (int side = -1; side <= 1; side += 2)
+                 {
++                    // Leave the junction mouth clear so the escape road is visible from the main road.
++                    if (side > 0 && Mathf.Abs(z - JunctionZ) < JunctionHalfWidth + 14) continue;
+                     float h = 9 + rng.Next(20);
+                     Box("City block", root.transform, new Vector3(side * 30, h / 2, z), new Vector3(18, h, 21), building);
+                     for (int y = 3; y < h - 1; y += 4)
+                         Box("Window strip", root.transform, new Vector3(side * 20.9f, y, z), new Vector3(0.1f, 1.4f, 15), windows, false);
+                 }
+-            for (int z = 125; z < length - 90; z += 85)
+-            {
+-                if (Mathf.Abs(z - Pickup.z) < 25) continue;
+-                float x = ((z / 85) % 2 == 0 ? -1 : 1) * 7;
+-                Box("Roadworks", root.transform, new Vector3(x, 0.7f, z), new Vector3(8, 1.4f, 2), orange);
+-            }
++
++            BuildRoadblocks(stage, rng, barrier, blue);
++
+             Box("Pickup zone", root.transform, new Vector3(0, 0.04f, Pickup.z), new Vector3(12, 0.06f, 12), blue, false);
+-            Box("Safehouse zone", root.transform, new Vector3(0, 0.04f, Destination.z), new Vector3(14, 0.06f, 14), green, false);
+             Box("Bank", root.transform, new Vector3(25, 5, Pickup.z), new Vector3(14, 10, 20), blue);
++            Box("Escape zone", root.transform, new Vector3(Destination.x, 0.04f, JunctionZ), new Vector3(20, 0.06f, JunctionHalfWidth * 2), green, false);
+             Label("BANK / PICKUP", new Vector3(0, 6, Pickup.z), blue.color);
+-            Label("SAFEHOUSE", new Vector3(0, 7, Destination.z), green.color);
++            Label("CITY LIMITS", new Vector3(Destination.x, 7, JunctionZ), green.color);
++            Label("EXIT >>", new Vector3(9, 6, JunctionZ), green.color);
++
+             for (int i = 0; i < stage.crewCount; i++)
+             {
+                 GameObject member;
+@@ -102,8 +153,8 @@ namespace Getaway
+                 member.name = "Crew " + (i + 1);
+                 member.transform.position = new Vector3(5.5f, 1, Pickup.z - 3 + i * 2);
+                 crew.Add(member);
+-                member.SetActive(false);
+             }
++
+             if (loadout == null) loadout = new OwnedVehicle { id = "sedan" };
+             Color paint = loadout.id == "coupe" ? new Color(0.8f, 0.12f, 0.20f) : loadout.id == "van" ? new Color(0.18f, 0.55f, 0.4f) : new Color(0.9f, 0.48f, 0.13f);
+             GameObject prefab = loadout.id == "coupe" ? coupeVisualPrefab : loadout.id == "van" ? vanVisualPrefab : playerVisualPrefab;
+@@ -117,6 +168,31 @@ namespace Getaway
+                 else if (loadout.id == "coupe") cabin.localScale = new Vector3(1.5f, 0.4f, 1.6f);
+             }
+         }
++
++        // Every line spans the road except for one gap, and consecutive lines never share a lane,
++        // so the route is a readable slalom rather than a wall of dice rolls.
++        void BuildRoadblocks(StageDefinition stage, System.Random rng, Material barrier, Material beacon)
++        {
++            float[] lanes = { -10.5f, -5.25f, 0, 5.25f, 10.5f };
++            float half = Mathf.Clamp(stage.roadblockGap, 5, 16) / 2;
++            float spacing = Mathf.Max(25, stage.roadblockSpacing);
++            int previous = -1;
++            for (float z = Mathf.Max(30, stage.firstRoadblock); z < stage.roadLength - 60; z += spacing)
++            {
++                if (Mathf.Abs(z - Pickup.z) < 24) continue;
++                if (Mathf.Abs(z - JunctionZ) < JunctionHalfWidth + 20) continue;
++                int lane = rng.Next(lanes.Length);
++                if (lane == previous) lane = (lane + 1 + rng.Next(lanes.Length - 1)) % lanes.Length;
++                previous = lane;
++                float gap = lanes[lane];
++                roadblocks.Add(new Vector2(z, gap));
++                XSpan("Roadblock", z, 0.7f, -RoadHalfWidth, gap - half, 2, 1.4f, barrier);
++                XSpan("Roadblock", z, 0.7f, gap + half, RoadHalfWidth, 2, 1.4f, barrier);
++                Box("Roadblock beacon", root.transform, new Vector3(Mathf.Clamp(gap - half - 1.2f, -RoadHalfWidth, RoadHalfWidth), 1.7f, z), new Vector3(0.5f, 0.5f, 0.5f), beacon, false);
++                Box("Roadblock beacon", root.transform, new Vector3(Mathf.Clamp(gap + half + 1.2f, -RoadHalfWidth, RoadHalfWidth), 1.7f, z), new Vector3(0.5f, 0.5f, 0.5f), beacon, false);
++            }
++        }
++
+         void Label(string text, Vector3 position, Color color)
+         {
+             var obj = new GameObject(text);
+@@ -158,7 +234,6 @@ namespace Getaway
+             return obj.AddComponent<ArcadeCar>();
+         }
+         public void BoardCrew() { foreach (var member in crew) member.SetActive(false); }
+-        public void ShowCrew() { foreach (var member in crew) member.SetActive(true); }
+         public void SpawnPolice(StageDefinition stage)
+         {
+             for (int i = 0; i < stage.policeCount; i++)
+@@ -166,9 +241,10 @@ namespace Getaway
+                 float spawnZ = Player.transform.position.z - 28 - i * 7;
+                 var car = Car("Police " + (i + 1), new Vector3(i % 2 == 0 ? -4 : 4, 0.8f, spawnZ), Material(new Color(0.8f, 0.84f, 0.9f)), policeVisualPrefab);
+                 car.topSpeed = stage.policeSpeed;
++                car.acceleration = stage.policeAcceleration;
+                 // Patrol cars keep full grip: a sliding pursuer loses the player instead of pressuring them.
+                 car.handbrakeDrift = false;
+-                var ai = car.gameObject.AddComponent<PoliceDriver>(); ai.target = Player;
++                var ai = car.gameObject.AddComponent<PoliceDriver>(); ai.target = Player; ai.world = this;
+                 Police.Add(ai);
+                 Box("Red beacon", car.transform, new Vector3(-0.45f, 1.03f, 0), new Vector3(0.6f, 0.16f, 0.3f), Material(Color.red), false);
+                 Box("Blue beacon", car.transform, new Vector3(0.45f, 1.03f, 0), new Vector3(0.6f, 0.16f, 0.3f), Material(Color.blue), false);
+@@ -178,7 +254,7 @@ namespace Getaway
+         {
+             if (root != null) { root.SetActive(false); Destroy(root); }
+             foreach (var mat in materials) if (mat != null) Destroy(mat);
+-            materials.Clear(); Police.Clear(); crew.Clear();
++            materials.Clear(); Police.Clear(); crew.Clear(); roadblocks.Clear();
+             if (slippery != null) Destroy(slippery);
+         }
+         void OnDestroy() { Clear(); }
+diff --git a/Assets/Getaway/Stages/Stage01.asset b/Assets/Getaway/Stages/Stage01.asset
+index 8519846..336dc3f 100644
+--- a/Assets/Getaway/Stages/Stage01.asset
++++ b/Assets/Getaway/Stages/Stage01.asset
+@@ -13,19 +13,22 @@ MonoBehaviour:
+   m_Name: Stage1
+   m_EditorClassIdentifier:
+   title: The First Job
+-  briefing: Collect three crew members outside the bank, lose the patrol cars, and reach the safehouse.
++  briefing: Patrol cars are already setting up barricades. Punch through to the bank, load the crew, and run for the city limits.
+   roadLength: 650
+   timeLimit: 100
+-  policeCount: 2
+-  policeSpeed: 24
+-  escapeDistance: 65
+-  escapeSeconds: 5
+   crewCount: 3
+   seed: 17
++  policeCount: 2
++  policeSpeed: 38
++  policeAcceleration: 9
+   bankDistance: 180
+-  crewExitTime: 14
+-  lateGrace: 12
+-  arrivalScoreWindow: 10
++  bankDeadline: 14
++  arrivalParTime: 7
+   maxArrivalScore: 1000
++  firstRoadblock: 55
++  roadblockSpacing: 55
++  roadblockGap: 8
++  exitJunctionOffset: 120
++  exitRoadLength: 170
+   startingLoot: 12000
+   cashLossPerDamage: 120
+diff --git a/Assets/Getaway/Stages/Stage02.asset b/Assets/Getaway/Stages/Stage02.asset
+index bf0b0ad..15207be 100644
+--- a/Assets/Getaway/Stages/Stage02.asset
++++ b/Assets/Getaway/Stages/Stage02.asset
+@@ -13,19 +13,22 @@ MonoBehaviour:
+   m_Name: Stage2
+   m_EditorClassIdentifier:
+   title: Downtown Heat
+-  briefing: Four crew members need a ride through downtown roadworks. Keep the car intact.
++  briefing: Downtown is locked down and the patrols are quicker. Thread the barricades, take the haul, and do not let them pin you.
+   roadLength: 850
+   timeLimit: 120
+-  policeCount: 3
+-  policeSpeed: 26
+-  escapeDistance: 70
+-  escapeSeconds: 6
+   crewCount: 4
+   seed: 28
++  policeCount: 3
++  policeSpeed: 46
++  policeAcceleration: 9.5
+   bankDistance: 240
+-  crewExitTime: 18
+-  lateGrace: 12
+-  arrivalScoreWindow: 10
++  bankDeadline: 18
++  arrivalParTime: 9
+   maxArrivalScore: 1000
++  firstRoadblock: 55
++  roadblockSpacing: 55
++  roadblockGap: 7
++  exitJunctionOffset: 130
++  exitRoadLength: 190
+   startingLoot: 18000
+   cashLossPerDamage: 180
+diff --git a/Assets/Getaway/Stages/Stage03.asset b/Assets/Getaway/Stages/Stage03.asset
+index b9176f9..2f19d47 100644
+--- a/Assets/Getaway/Stages/Stage03.asset
++++ b/Assets/Getaway/Stages/Stage03.asset
+@@ -13,19 +13,22 @@ MonoBehaviour:
+   m_Name: Stage3
+   m_EditorClassIdentifier:
+   title: The Last Ride
+-  briefing: One final getaway. Break away from four patrol cars and deliver the whole crew safely.
++  briefing: Every unit in the city is out and their interceptors are faster than anything in your garage. Drive clean or drive home broke.
+   roadLength: 1050
+   timeLimit: 140
+-  policeCount: 4
+-  policeSpeed: 28
+-  escapeDistance: 75
+-  escapeSeconds: 7
+   crewCount: 5
+   seed: 39
++  policeCount: 4
++  policeSpeed: 56
++  policeAcceleration: 10
+   bankDistance: 300
+-  crewExitTime: 22
+-  lateGrace: 12
+-  arrivalScoreWindow: 10
++  bankDeadline: 22
++  arrivalParTime: 11
+   maxArrivalScore: 1000
++  firstRoadblock: 55
++  roadblockSpacing: 52
++  roadblockGap: 6.5
++  exitJunctionOffset: 140
++  exitRoadLength: 210
+   startingLoot: 24000
+   cashLossPerDamage: 240
+diff --git a/Docs/CAREER_GAMEPLAY.md b/Docs/CAREER_GAMEPLAY.md
+index 406c226..2dbe2e9 100644
+--- a/Docs/CAREER_GAMEPLAY.md
++++ b/Docs/CAREER_GAMEPLAY.md
+@@ -1,14 +1,24 @@
+-# 은행 약속 → 도주 → 차고
++# 은행 돌파 → 도주 → 차고
+ 
+-## 시간 점수
++## 1단계 — 제한시간 안에 은행까지
++
++신고를 받은 경찰이 이미 도로 곳곳에 바리케이드를 세워 두었습니다. 각 차단선에는 갭이 **하나만** 뚫려 있고 위치는 스테이지 시드로 고정되어 있어 반복 주행으로 외울 수 있습니다. 연속한 두 차단선은 절대 같은 차선에 갭을 두지 않습니다.
+ 
+ `Start job`부터 시간을 측정합니다. 은행 반경 6m 안에서 속도가 1.5m/s 미만이 된 첫 시각을 도착으로 기록합니다.
+ 
+-`점수 = 반올림(최대점수 × max(0, 1 - abs(도착시각 - 예정시각) / 점수허용오차))`
++`점수 = 반올림(최대점수 × clamp01((제한시간 - 도착시각) / (제한시간 - 기준시각)))`
++
++기준시각(`arrivalParTime`) 이내로 들어오면 만점, 제한시간(`bankDeadline`)에 닿으면 0점입니다. **빠를수록 항상 유리**하므로 엔진 강화가 점수를 깎지 않습니다. 점수는 첫 정차 순간에 확정되고 재진입으로 다시 계산하지 않습니다. 일시 정지 중에는 임무 시계도 멈춥니다.
++
++강도는 처음부터 은행에서 대기합니다. 은행 구역에서 2초 연속 정차하면 탑승하며, 움직이거나 구역을 나가면 탑승 시간이 초기화됩니다. 제한시간까지 탑승을 끝내지 못하면 임무 실패입니다. 탑승 시 초기 현금을 받고 28m 뒤에서 경찰이 출동합니다.
++
++## 2단계 — 도시 밖으로
++
++경찰은 더 이상 따돌릴 수 없습니다. 본선 도로 끝 부근에서 오른쪽으로 갈라지는 탈출 도로를 타고 **초록색 `CITY LIMITS` 구역에 차량이 파괴되지 않은 채로 진입**하면 성공입니다. 정차할 필요는 없고 전속력으로 통과해도 됩니다. 본선 끝은 막다른 길이므로 분기를 놓치면 되돌아와야 합니다.
+ 
+-기본 최대점수 1,000, 허용오차 10초입니다. 정확히 도착하면 1,000점, 2초 빠르거나 늦으면 800점, 5초 차이면 500점, 10초 이상 차이면 0점입니다. 일찍 와서 기다릴 수 있지만 점수는 첫 정차 순간에 확정됩니다. 구역에 다시 들어와도 점수를 재계산하지 않습니다. 일시 정지 중에는 임무 시계도 멈춥니다.
++경찰 순찰차는 **직선 최고속이 최강 차량 풀업그레이드보다 약간 빠릅니다.** 대신 가속도가 훨씬 낮아서, 바리케이드에서 감속했다가 다시 붙일 때마다 플레이어가 거리를 법니다. 깔끔하게 몰면 벌어지고, 한 번 크게 박아 멈추면 순찰차가 따라붙어 들이받기 시작합니다.
+ 
+-강도는 예정 시각에 나타납니다. 그 뒤 2초 연속 정차하면 탑승합니다. 움직이거나 구역을 나가면 탑승 시간만 초기화됩니다. 예정 시각 +12초까지 탑승을 끝내야 합니다. 탑승 시 초기 현금을 받고 은행 뒤 28m 지점부터 경찰이 출동합니다.
++경찰이 7m 안에 있고 속도가 2m/s 미만인 상태가 누적 4초가 되면 체포되어 실패합니다. 차량 파괴와 시간 초과도 실패입니다.
+ 
+ ## 현금과 정산
+ 
+@@ -18,7 +28,7 @@
+ 
+ 1스테이지에서 경찰 피해 10이면 현금 1,200을 잃습니다. 현금 보호 3레벨이면 480입니다. 현금의 최솟값은 0입니다. 벽·장애물·R 복구는 내구도만 줄입니다. 기존 충돌의 최소 충격 기준 및 0.6초 피해 쿨다운은 유지됩니다.
+ 
+-추격을 해제하고 목적지에서 정차하면 잔여 현금이 지갑에 더해집니다. 실패·중도 종료한 임무는 입금하지 않습니다. 기존 지갑은 임무 피해나 실패로 줄어들지 않습니다. 점수는 현금으로 환전하지 않으며 성공 시 누적 점수·최고 점수로 별도 저장합니다.
++탈출 구역에 도달하면 잔여 현금이 지갑에 더해집니다. 실패·중도 종료한 임무는 입금하지 않습니다. 기존 지갑은 임무 피해나 실패로 줄어들지 않습니다. 점수는 현금으로 환전하지 않으며 성공 시 누적 점수·최고 점수로 별도 저장합니다.
+ 
+ 저장 성공 후에만 잔액·구매 내역을 반영합니다. 정산 저장 실패 시 결과 화면의 `Retry saving earnings`로 재시도해야 다음 임무나 상점으로 갈 수 있습니다. 임무 ID를 저장해 같은 결과를 여러 번 처리해도 한 번만 지급합니다. 저장 실패 상태에서 앱을 강제로 종료하면 이번 미저장 보상은 복구되지 않습니다.
+ 
+@@ -49,6 +59,6 @@
+ 
+ 기존 `progress.json`에 버전 2 필드를 추가했습니다. 옛 해금 스테이지·성공 횟수는 유지하고 신규 지갑 0원과 기본 세단을 지급합니다. 지갑, 차량별 강화, 선택 차량, 점수, 정산 ID를 같은 파일에 저장합니다. 로컬 1인용이며 클라우드 동기화와 여러 인스턴스 동시 저장은 지원하지 않습니다. 지갑 상한은 20억입니다.
+ 
+-은행 위치·예정 시각·유예·점수·현금은 `StageDefinition` Inspector에서 조절합니다. 가격·차량 성능·강화 효과는 `GarageCatalog`에 있습니다. 제공 스테이지 에셋은 업데이트되어 있어 씬 재생성이 필수는 아닙니다.
++은행 위치·제한시간·기준시각·점수·현금·바리케이드 간격과 갭 폭·탈출 도로 길이·경찰 속도와 가속도는 `StageDefinition` Inspector에서 조절합니다. 가격·차량 성능·강화 효과는 `GarageCatalog`에 있습니다. 제공 스테이지 에셋은 업데이트되어 있어 씬 재생성이 필수는 아닙니다.
+ 
+ Varco 차량 프리팹은 `WorldBuilder`의 `Player Visual Prefab`(세단), `Coupe Visual Prefab`, `Van Visual Prefab`에 연결합니다. [로그 안내](LOGGING_AND_GITHUB.md)에 저장 경로와 기록 형식이 있습니다.
+diff --git a/Docs/DEVLOG.md b/Docs/DEVLOG.md
+index e2017dc..c452461 100644
+--- a/Docs/DEVLOG.md
++++ b/Docs/DEVLOG.md
+@@ -1,5 +1,19 @@
+ # 개발 로그
+ 
++## 2026-09-11 — 바리케이드 돌파, 도시 탈출, 위협적인 경찰
++
++문제: 세 시스템이 서로를 무너뜨리고 있었습니다. (1) 전력으로 달렸을 때 도착 시각이 약속 시각보다 7~12초 빨라서, 1스테이지 288점·2스테이지 62점·3스테이지 0점이 나왔습니다. 즉 1페이즈가 "일부러 천천히 가기"였습니다. (2) 그래서 엔진 강화가 점수를 **깎았습니다.** 풀업그레이드 쿠페는 1스테이지에서 128점으로 기본 세단(288점)의 절반 이하였습니다. (3) 경찰은 플레이어와 가속도가 같고 최고속만 낮아(24~28 vs 36~52) 간격이 벌어지기만 했습니다. 10초 뒤 84~114m까지 벌어져, "경찰에 부딪히면 돈을 잃는다"가 사실상 "혼자 장애물에 박으면 돈을 잃는다"였습니다. 현금·금고·장갑 시스템 전체가 발동하지 않는 위협 위에 얹혀 있었습니다.
++
++변경:
++
++- **은행 도착을 제한시간 방식으로.** 신고를 받은 경찰이 도로마다 바리케이드를 세워 둔 설정으로 바꾸고, 각 차단선에 갭을 하나만 뚫었습니다. 점수는 `clamp01((제한시간 - 도착) / (제한시간 - 기준시각))`이라 빠를수록 항상 유리합니다. 강도는 처음부터 은행에서 대기하므로 `crewExitTime`·`lateGrace`·`arrivalScoreWindow`를 `bankDeadline`·`arrivalParTime`으로 정리했습니다.
++- **바리케이드 생성.** 시드 기반으로 차선 5개 중 하나에 갭을 두고, 연속한 두 줄이 같은 차선을 쓰지 않게 했습니다. 은행과 탈출 분기 주변은 비웁니다. 기존 `Roadworks`를 대체합니다.
++- **승리 조건을 탈출 구역 도착으로 교체.** "65m 간격 N초 유지"(`MissionState.Escaped`, `escapeDistance`, `escapeSeconds`)를 삭제했습니다. 본선 끝 부근에서 오른쪽으로 갈라져 도시 밖으로 뻗는 탈출 도로를 만들고, 끝의 `CITY LIMITS` 구역에 반경 10m로 진입하면 성공입니다. 속도 제한이 없어 전속력 통과가 가능하고, 본선 끝은 막다른 길입니다.
++- **경찰을 실제 위협으로.** 직선 최고속을 38/46/56 m/s로 올려 최강 차량 풀업그레이드(약 52 m/s)보다 약간 빠르게 하고, 가속도는 9/9.5/10으로 낮췄습니다(플레이어 14~22). 이제 직선에서는 붙고 바리케이드 재가속 구간에서 벌어집니다. `policeSpeed`의 Range 상한을 35에서 80으로 넓혔습니다.
++- **경찰 AI 개선.** `PoliceDriver`가 `WorldBuilder.NextRoadblock`으로 갭 위치를 읽어 조준하고, 제동거리 안에 들어오면 감속합니다. 갭 정보가 있을 때는 기존 SphereCast 회피를 끕니다.
++
++검증: 새 규칙을 파이썬으로 포팅해 16개 검사 전부 통과. 주행 모델 수치 적분으로 도착 시각과 추격을 확인했습니다. 은행 도착은 기본 세단 8.2/10.1/12.2초(829/878/891점), 최강차 7.0/8.6/10.5초(전부 만점), 서툰 주행 9.8/12.5/15.9초(600/611/555점)로 **강화가 점수를 올리는 방향**이 되었습니다. 추격은 깔끔하게 몰면 11~14초에 탈출 구역까지 벌어지고, 한 번 완전 정지하면 최대 간격이 40m대에 머물며 경찰이 계속 따라붙습니다. 월드 배치는 갭이 도로 밖으로 나가지 않는지, 은행·분기 입구를 막지 않는지 프로그램으로 검사했습니다. 컨테이너에 .NET SDK와 C# 컴파일러를 설치할 수 없어(egress 차단) `Tests/CareerRules.Tests`와 Unity Play Mode는 PC에서 확인이 필요합니다.
++
+ ## 2026-09-11 — 은행 약속, 현금 손실, 저장형 상점
+ 
+ 요청: 정해진 시각에 은행 도착 시 점수, 탑승 뒤 경찰 충돌 피해에 비례하는 현금 손실, 탈출 잔액 영구 저장, 차량·업그레이드 구매.
+diff --git a/README.md b/README.md
+index 5ee3e19..1ad7e2f 100644
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,6 @@
+ # GETAWAY DRIVER
+ 
+-약속 시각에 은행에 도착해 강도와 돈을 싣고 경찰을 따돌리는 **PC 1인용 3D 아케이드 레이싱 프로토타입**입니다. 탈출에 성공해 지킨 돈은 저장되어 차량과 업그레이드 구매에 사용할 수 있습니다.
++경찰 바리케이드를 뚫고 제한시간 안에 은행에 닿아 강도와 돈을 싣고, 도시 밖 탈출 도로까지 차를 온전히 몰고 나가는 **PC 1인용 3D 아케이드 레이싱 프로토타입**입니다. 지켜낸 돈은 저장되어 차량과 업그레이드 구매에 쓰입니다.
+ 
+ ## 실행
+ 
+@@ -8,9 +8,9 @@
+ 2. 제작 기준 에디터는 **Unity 6000.6.0f1**, 렌더링은 **Built-in**입니다.
+ 3. `Assets/Getaway/Scenes/Getaway.unity`를 열고 ▶ Play를 누릅니다.
+ 4. 씬이 없는 소스 패키지라면 상단 `Getaway > Create or rebuild demo scene`을 먼저 누릅니다. 이 메뉴는 데모 씬을 다시 만들므로 커스텀 씬 작업은 별도 이름으로 저장하세요.
+-5. `Start job`을 누릅니다. 1스테이지는 **시작 후 14초에 은행 파란 구역에서 정차**하는 것이 목표입니다. 첫 정차 시각이 약속 시각에 가까울수록 최대 1,000점을 받습니다.
+-6. 약속 시각에 강도가 나오면 2초 연속 정차해 태웁니다. 탑승 완료 시 현금과 경찰 추격이 시작됩니다.
+-7. 경찰 피해에 비례해 소지 현금이 줄어듭니다. 경찰을 따돌린 뒤 초록 목적지에서 정차하면 남은 돈이 지갑에 입금됩니다.
++5. `Start job`을 누릅니다. 도로를 가로막은 노란 바리케이드마다 갭이 하나씩 뚫려 있습니다. 1스테이지는 **14초 안에** 은행 파란 구역에 정차해 탑승까지 마쳐야 합니다.
++6. 은행에서 2초 연속 정차하면 강도가 탑니다. 빨리 도착할수록 점수가 높고, 7초 이내면 만점입니다.
++7. 탑승 즉시 현금을 받고 경찰이 출동합니다. 들이받힐 때마다 현금이 줄어듭니다. 본선 끝 부근 오른쪽으로 갈라지는 탈출 도로를 타고 초록 `CITY LIMITS` 구역에 도달하면 남은 돈이 지갑에 입금됩니다. 정차할 필요는 없습니다.
+ 8. 시작 전이나 결과 화면의 `Garage / Shop`에서 차량·업그레이드를 구매합니다. 구매 차량은 `Equip`을 눌러 장착하고 다음 임무부터 사용합니다.
+ 
+ Windows 빌드는 `Getaway > Build Windows`로 생성합니다. `Builds/Windows/GetawayDriver.exe`와 같은 폴더의 데이터 파일을 함께 배포해야 합니다. 종료는 Windows 기본 단축키 `Alt+F4`입니다.
+@@ -28,23 +28,25 @@ Windows 빌드는 `Getaway > Build Windows`로 생성합니다. `Builds/Windows/
+ 
+ 직진 중 Space는 일반 브레이크이고, 조향을 넣은 채 누르면 횡방향 접지가 무너지면서 선회력이 1.4배로 올라가고 감속이 약해져 속도를 실은 채 코너를 돌 수 있습니다. 손을 떼도 접지는 약 1.4초에 걸쳐 서서히 회복되므로 슬라이드가 잠시 이어집니다. 조향은 저속에서 민감하고 고속에서 둔해지도록 속도에 따라 선회 속도가 120°/s에서 52°/s로 줄어듭니다. 주행 감각 수치는 모두 `ArcadeCar` 컴포넌트의 Inspector에서 조절할 수 있습니다.
+ 
+-동료 탑승 조건은 강도가 나온 뒤 은행 반경 6m, 속도 1.5m/s 미만, 연속 2초입니다. 약속 시각 +12초까지 탑승을 끝내야 합니다. 목적지 조건은 추격 해제, 반경 7m, 속도 2m/s 미만입니다. 경찰이 7m 안에 있고 속도가 2m/s 미만인 상태가 4초 누적되면 체포됩니다. 파손·시간 초과도 실패입니다. 실패한 임무는 현금이 입금되지 않으며 기존 지갑 잔액은 유지됩니다.
++탑승 조건은 은행 반경 6m, 속도 1.5m/s 미만, 연속 2초이며 제한시간 안에 끝내야 합니다. 성공 조건은 탈출 구역 반경 10m 진입이고 속도 제한은 없습니다. 경찰이 7m 안에 있고 속도가 2m/s 미만인 상태가 4초 누적되면 체포됩니다. 파손·시간 초과도 실패입니다. 실패한 임무는 현금이 입금되지 않으며 기존 지갑 잔액은 유지됩니다.
+ 
+-도착 점수와 자금은 별도입니다. 첫 정차 점수는 기다리거나 재진입해도 바뀌지 않습니다. 자세한 규칙과 가격은 [게임 진행과 상점](Docs/CAREER_GAMEPLAY.md)을 참고하세요.
++도착 점수와 자금은 별도입니다. 점수는 첫 정차 순간에 확정되며 재진입해도 바뀌지 않습니다. 빠를수록 점수가 높으므로 엔진 강화가 점수에 손해를 주지 않습니다. 자세한 규칙과 가격은 [게임 진행과 상점](Docs/CAREER_GAMEPLAY.md)을 참고하세요.
+ 
+ ## 스테이지
+ 
+-| 스테이지 | 도로 | 경찰 | 제한 시간 | 탈출 조건 |
+-|---|---:|---:|---:|---|
+-| The First Job | 650m | 2대 | 100초 | 65m 초과 간격, 5초 |
+-| Downtown Heat | 850m | 3대 | 120초 | 70m 초과 간격, 6초 |
+-| The Last Ride | 1,050m | 4대 | 140초 | 75m 초과 간격, 7초 |
+-
+-| 스테이지 | 은행 Z 위치 | 약속 시각 | 초기 현금 | 경찰 피해 1당 손실 |
++| 스테이지 | 도로 | 경찰 | 경찰 최고속 / 가속 | 임무 제한 시간 |
+ |---|---:|---:|---:|---:|
+-| 1 | 180m | 14초 | 12,000 | 120 |
+-| 2 | 240m | 18초 | 18,000 | 180 |
+-| 3 | 300m | 22초 | 24,000 | 240 |
++| The First Job | 650m | 2대 | 38 m/s · 9 m/s² | 100초 |
++| Downtown Heat | 850m | 3대 | 46 m/s · 9.5 m/s² | 120초 |
++| The Last Ride | 1,050m | 4대 | 56 m/s · 10 m/s² | 140초 |
++
++| 스테이지 | 은행 Z | 은행 제한시간 | 만점 기준 | 바리케이드 | 갭 폭 | 탈출 분기 Z | 초기 현금 | 피해 1당 손실 |
++|---|---:|---:|---:|---:|---:|---:|---:|---:|
++| 1 | 180m | 14초 | 7초 | 7개 | 8m | 530m | 12,000 | 120 |
++| 2 | 240m | 18초 | 9초 | 12개 | 7m | 720m | 18,000 | 180 |
++| 3 | 300m | 22초 | 11초 | 15개 | 6.5m | 910m | 24,000 | 240 |
++
++경찰 최고속은 최강 차량(Night Runner 엔진 3레벨, 약 52 m/s)보다 약간 높게 잡혀 있습니다. 대신 가속도가 플레이어의 절반 이하라, 바리케이드에서 감속한 뒤 다시 붙는 구간마다 거리가 벌어집니다.
+ 
+ `Assets/Getaway/Stages/Stage01~03.asset`의 Inspector에서 난이도를 조절합니다. 새 `Getaway/Stage` 에셋을 만들고 씬의 `GameSession.stages` 배열에 추가하면 스테이지를 늘릴 수 있습니다. 재실행하면 가장 높은 해금 스테이지에서 시작하며, 화면 버튼으로 1스테이지부터 다시 할 수 있습니다.
+ 
+@@ -54,14 +56,14 @@ Windows 빌드는 `Getaway > Build Windows`로 생성합니다. `Builds/Windows/
+ |---|---|
+ | `ArcadeCar.cs` | Rigidbody 기반 가속·후진·조향·충돌 피해·복구 |
+ | `GameInput.cs` | 키보드 입력, 기존/New Input System 조건부 지원 |
+-| `PoliceDriver.cs` | 추적·장애물 감지·막힘 시 후진 |
+-| `GameSession.cs` | 브리핑→탑승→추격→탈출→성공/실패 |
++| `PoliceDriver.cs` | 추적, 바리케이드 갭 조준과 감속, 막힘 시 후진 |
++| `GameSession.cs` | 브리핑→은행 돌파→추격→도시 탈출→성공/실패 |
+ | `StageDefinition.cs` | ScriptableObject 스테이지 데이터 |
+-| `WorldBuilder.cs` | 도로·도시·차량·동료·목적지 생성, 모델 교체 슬롯 |
++| `WorldBuilder.cs` | 도로·도시·바리케이드·탈출 도로·차량 생성, 모델 교체 슬롯 |
+ | `FollowCamera.cs` | 추적 카메라, 환경 충돌 회피 |
+ | `GameHud.cs` | 속도·내구도·시간·목표 방향·진행 UI |
+ | `RunLogger.cs` | 세션별 JSONL 이벤트, 1초 차량 상태, Console 로그 |
+-| `CareerRules.cs` | 시간 점수·현금 손실·구매·정산 규칙, 차량 목록 |
++| `CareerRules.cs` | 도착 점수·현금 손실·구매·정산 규칙, 차량 목록 |
+ | `CareerStorage.cs` | 임시 파일 검증·교체, 백업 복원, 손상 파일 보호 |
+ | `ProgressStore.cs` | Unity JSON 직렬화와 기존 저장 경로 연결 |
+ | `Editor/ProjectSetup.cs` | 씬 생성·Windows 빌드 |
+diff --git a/Tests/CareerRules.Tests/Program.cs b/Tests/CareerRules.Tests/Program.cs
+index 138a132..608a8f9 100644
+--- a/Tests/CareerRules.Tests/Program.cs
++++ b/Tests/CareerRules.Tests/Program.cs
+@@ -4,28 +4,50 @@ using System.Text.Json;
+ int count = 0;
+ var results = new List<string>();
+ void Check(bool ok, string name) { if (!ok) throw new Exception(name); results.Add("PASS " + name); Console.WriteLine("PASS " + name); count++; }
++// Deadline 14s, full marks at or under 7s. Arriving sooner must never be worth less,
++// otherwise the garage would be selling engine upgrades that cost the player score.
+ PickupSchedule At(double time)
+ {
+-    var a = new PickupSchedule(14, 12, 10, 1000);
++    var a = new PickupSchedule(14, 7, 1000);
+     a.Advance(time - 0.02, false); a.Advance(0.02, true); return a;
+ }
+-var perfect = At(14); Check(perfect.Score == 1000, "Exact appointment awards 1000 points");
+-Check(At(12).Score == 800 && At(16).Score == 800, "Early and late scores are symmetric");
+-Check(At(5).Score == 100 && At(3).Score == 0, "Score falls with error and clamps at zero");
+-var early = At(8); int earlyScore = early.Score; early.Advance(6, true);
+-Check(early.Score == earlyScore && !early.Boarded && early.Boarding == 0, "Waiting early does not farm score or board before crew exits");
+-early.Advance(2, true); Check(early.Boarded && !early.Missed, "Early arrival can wait and board at exit time");
+-var reenter = At(8); reenter.Advance(5.98, false); reenter.Advance(0.02, true);
+-Check(reenter.Score == earlyScore, "Re-entering the bank cannot reroll timing score");
+-var depart = At(14); depart.Advance(1, true); depart.Advance(0.1, false);
+-Check(depart.Boarding == 0, "Leaving or moving resets boarding progress");
+-depart.Advance(2, true); Check(depart.Boarded, "Continuous stopped boarding succeeds");
+-var miss = new PickupSchedule(14, 12, 10, 1000); miss.Advance(27, false);
+-Check(miss.Missed && !miss.Boarded, "Missing pickup deadline fails");
+-var late = At(25); late.Advance(2, true);
+-Check(late.Missed && !late.Boarded, "Not enough boarding time before deadline fails");
+-var edge = At(24); edge.Advance(2, true);
+-Check(edge.Boarded, "Boarding completing exactly at deadline succeeds");
++bool Near(int value, int expected, int slack = 2) => Math.Abs(value - expected) <= slack;
++Check(Near(At(7).Score, 1000), "Arriving at par time pays the full score");
++Check(At(4).Score == 1000 && At(0.5).Score == 1000, "Beating par cannot pay less than par");
++Check(Near(At(10.5).Score, 500), "Score falls linearly between par and the deadline");
++Check(PickupSchedule.ScoreFor(14, 14, 7, 1000) == 0, "Arriving on the deadline scores nothing");
++Check(PickupSchedule.ScoreFor(20, 14, 7, 1000) == 0, "Arriving past the deadline scores nothing");
++Check(PickupSchedule.ScoreFor(5, 6, 9, 1000) == 1000, "A par slower than the deadline still pays out");
++int monotone = int.MaxValue; bool falling = true;
++for (double t = 0.5; t <= 14; t += 0.25)
++{
++    int s = PickupSchedule.ScoreFor(t, 14, 7, 1000);
++    if (s > monotone) falling = false;
++    monotone = s;
++}
++Check(falling, "Score never rewards a slower run");
++
++var board = At(5); int lockedScore = board.Score;
++board.Advance(1.0, true); Check(!board.Boarded, "One second at the bank is not enough to board");
++board.Advance(0.5, false); Check(board.Boarding == 0, "Moving off resets boarding progress");
++board.Advance(2.01, true); Check(board.Boarded && !board.Missed, "Two continuous seconds boards the crew");
++Check(board.Score == lockedScore, "Boarding does not disturb the locked arrival score");
++
++var reenter = At(9); int firstStop = reenter.Score;
++reenter.Advance(1, false); reenter.Advance(0.02, true);
++Check(reenter.Score == firstStop, "Re-entering the bank cannot reroll the arrival score");
++
++var miss = new PickupSchedule(14, 7, 1000); miss.Advance(14.1, false);
++Check(miss.Missed && !miss.Boarded && miss.Score == 0, "Never reaching the bank fails with no score");
++
++var late = At(13);
++for (int i = 0; i < 200 && !late.Boarded && !late.Missed; i++) late.Advance(0.02, true);
++Check(late.Missed && !late.Boarded, "Arriving too late to finish boarding fails");
++
++var justInTime = At(11.5);
++for (int i = 0; i < 200 && !justInTime.Boarded && !justInTime.Missed; i++) justInTime.Advance(0.02, true);
++Check(justInTime.Boarded && !justInTime.Missed, "Arriving with two seconds to spare boards in time");
++Check(justInTime.Remaining > 0 && justInTime.Remaining < 1, "Remaining time counts down against the deadline");
+ Check(GarageCatalog.CashLoss(12000, 10, 120, 0) == 1200, "Police damage deducts proportional cash");
+ Check(GarageCatalog.CashLoss(12000, 20, 120, 0) == 2400, "Double damage causes double loss");
+ Check(GarageCatalog.CashLoss(12000, 10, 120, 3) == 480, "Safe level three reduces money loss by 60 percent");
+-- 
+2.43.0
+
