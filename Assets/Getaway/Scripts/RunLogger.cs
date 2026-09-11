@@ -11,6 +11,9 @@ namespace Getaway
             public string utc, session, type, detail;
             public int stage;
             public float elapsed, x, z, speedKph, health;
+            public string runId;
+            public int loot, arrivalScore;
+            public long wallet;
         }
         public string LogDirectory { get; private set; }
         string session;
@@ -30,10 +33,11 @@ namespace Getaway
             }
             catch (Exception e) { DisableLogging(e); }
         }
-        public void Write(string type, int stage, float elapsed, ArcadeCar car, string detail = "")
+        public void Write(string type, int stage, float elapsed, ArcadeCar car, string detail = "", string runId = "", int loot = 0, long wallet = 0, int arrivalScore = 0)
         {
             if (failed || eventsFile == null) return;
             var entry = new Entry { utc = DateTime.UtcNow.ToString("O"), session = session, type = type, stage = stage, elapsed = elapsed, detail = detail };
+            entry.runId = runId; entry.loot = loot; entry.wallet = wallet; entry.arrivalScore = arrivalScore;
             if (car != null) { entry.x = car.transform.position.x; entry.z = car.transform.position.z; entry.speedKph = car.Kph; entry.health = car.health; }
             try { eventsFile.WriteLine(JsonUtility.ToJson(entry)); }
             catch (Exception e) { DisableLogging(e); }

@@ -1,0 +1,44 @@
+2026-09-11T07:47:18.3994384Z
+PASS Exact appointment awards 1000 points
+PASS Early and late scores are symmetric
+PASS Score falls with error and clamps at zero
+PASS Waiting early does not farm score or board before crew exits
+PASS Early arrival can wait and board at exit time
+PASS Re-entering the bank cannot reroll timing score
+PASS Leaving or moving resets boarding progress
+PASS Continuous stopped boarding succeeds
+PASS Missing pickup deadline fails
+PASS Not enough boarding time before deadline fails
+PASS Boarding completing exactly at deadline succeeds
+PASS Police damage deducts proportional cash
+PASS Double damage causes double loss
+PASS Safe level three reduces money loss by 60 percent
+PASS Cash never becomes negative
+PASS Legacy progress migrates with starter car and zero wallet
+PASS Insufficient balance cannot buy a vehicle
+PASS Unowned vehicle cannot be equipped
+PASS Successful run credits wallet
+PASS Repeated settlement is idempotent
+PASS Vehicle purchase charges once
+PASS Duplicate ownership cannot charge again
+PASS Engine upgrade is purchased and saved
+PASS Upgrade levels are per vehicle
+PASS Max upgrade cannot charge again
+PASS Failed purchase save rolls back both currency and ownership
+PASS Failed upgrade save does not mutate levels
+PASS Failed equipment save keeps previous selection
+PASS Failed payout remains unpaid
+PASS Retry pays exactly once
+PASS Legacy JSON loads through production storage
+PASS Persist earnings: Saved.
+PASS Persist purchase: Saved.
+PASS Persist selection: Saved.
+PASS Persist upgrade: Saved.
+PASS Restart restores wallet, purchased car, selection and upgrade
+PASS Idempotent payout survives restart
+PASS Corrupt primary recovers backup and preserves evidence
+PASS Repair does not replace good backup with corrupt data
+PASS Two corrupt saves block writes rather than silently reset money
+PASS Future save versions cannot be downgraded
+PASS Real filesystem write failure is reported
+42 checks passed. Production career rules and IO; not Unity Play Mode.

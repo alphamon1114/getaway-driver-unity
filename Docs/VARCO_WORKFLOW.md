@@ -10,7 +10,7 @@
 4. 부모는 Position/Rotation 0, Scale 1을 유지합니다. 크기나 축 보정은 모델 자식에서 합니다. 바퀴가 별도 메시여도 이번 버전에서는 시각 장식으로만 사용됩니다.
 5. 차량 프리팹에는 Rigidbody, WheelCollider, 운전 스크립트를 넣지 않습니다. 물리와 충돌은 런타임 차량 루트가 담당하며 시각 모델 내부의 Collider/Rigidbody는 자동으로 비활성화·제거됩니다.
 6. 이 부모를 Project 창으로 드래그해 프리팹으로 저장합니다.
-7. 데모 씬의 `Getaway Systems > WorldBuilder`에서 `Player Visual Prefab`, `Police Visual Prefab`에 각각 연결하고 씬을 저장합니다.
+7. 데모 씬의 `Getaway Systems > WorldBuilder`에서 `Player Visual Prefab`(세단), `Coupe Visual Prefab`(쿠페), `Van Visual Prefab`(밴), `Police Visual Prefab`에 각각 연결하고 씬을 저장합니다. 빈 슬롯은 기본형 모델을 사용합니다.
 8. 재생 후 전면 방향, 바닥 높이, 카메라 시야를 확인합니다. 바디 크기가 크게 다르면 `WorldBuilder.Car()`의 BoxCollider 크기도 맞춥니다.
 
 동료는 `Crew Visual Prefab`에 연결합니다. 동료의 피벗은 몸 중심, 높이는 약 2m로 맞추세요. 탑승 후 모델이 사라지는 방식이며 차 안 탑승 애니메이션은 포함하지 않습니다.

@@ -45,6 +45,8 @@ namespace Getaway.Editor
                     stage.timeLimit = 100 + i * 20; stage.policeCount = 2 + i; stage.policeSpeed = 24 + i * 2;
                     stage.escapeDistance = 65 + i * 5; stage.escapeSeconds = 5 + i;
                     stage.crewCount = 3 + i; stage.seed = 17 + i * 11;
+                    stage.bankDistance = 180 + i * 60; stage.crewExitTime = 14 + i * 4;
+                    stage.startingLoot = 12000 + i * 6000; stage.cashLossPerDamage = 120 + i * 60;
                     AssetDatabase.CreateAsset(stage, path);
                 }
                 session.stages[i] = stage;
