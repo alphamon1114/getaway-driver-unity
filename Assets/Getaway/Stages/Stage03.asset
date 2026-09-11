@@ -13,19 +13,22 @@ MonoBehaviour:
   m_Name: Stage3
   m_EditorClassIdentifier:
   title: The Last Ride
-  briefing: One final getaway. Break away from four patrol cars and deliver the whole crew safely.
+  briefing: Every unit in the city is out and their interceptors are faster than anything in your garage. Drive clean or drive home broke.
   roadLength: 1050
   timeLimit: 140
-  policeCount: 4
-  policeSpeed: 28
-  escapeDistance: 75
-  escapeSeconds: 7
   crewCount: 5
   seed: 39
+  policeCount: 4
+  policeSpeed: 56
+  policeAcceleration: 10
   bankDistance: 300
-  crewExitTime: 22
-  lateGrace: 12
-  arrivalScoreWindow: 10
+  bankDeadline: 22
+  arrivalParTime: 11
   maxArrivalScore: 1000
+  firstRoadblock: 55
+  roadblockSpacing: 52
+  roadblockGap: 6.5
+  exitJunctionOffset: 140
+  exitRoadLength: 210
   startingLoot: 24000
   cashLossPerDamage: 240

@@ -76,8 +76,8 @@ namespace Getaway.Editor
         }
         static void BoardNow(GameSession game)
         {
+            // The crew waits inside the bank from the start, so stopping there is enough.
             Teleport(game.World.Player, game.World.Pickup);
-            game.Tick(Mathf.Max(0.01f, game.Stage.crewExitTime - game.Elapsed + 0.01f));
             game.Tick(2.1f);
         }
         static IEnumerator Verify()
@@ -94,10 +94,13 @@ namespace Getaway.Editor
             car.Body.linearVelocity = Vector3.forward * 5;
             game.Tick(2.1f);
             Check(game.State == MissionState.Pickup, "Cannot board while driving fast");
-            car.Body.linearVelocity = Vector3.zero; game.Tick(0.1f);
-            Check(!game.Appointment.CrewAvailable && game.Loot == 0 && game.World.Police.Count == 0, "No crew, loot or pursuit before scheduled bank exit");
+            Teleport(car, game.World.Destination); game.Tick(0.1f);
+            Check(game.State == MissionState.Pickup && game.Loot == 0 && game.World.Police.Count == 0,
+                "City limits cannot be claimed before the crew is aboard");
+            Teleport(car, game.World.Pickup); game.Tick(0.1f);
             int earlyScore = game.ArrivalScore;
-            BoardNow(game);
+            Check(earlyScore == game.Stage.maxArrivalScore, "Beating par time pays the full arrival score");
+            game.Tick(2.1f);
             Check(game.ArrivalScore == earlyScore, "Waiting at bank preserves first-arrival score");
             Check(game.State == MissionState.Chase && game.World.Police.Count == 2, "Boarding triggers pursuit");
             int cash = game.Loot;
@@ -105,20 +108,17 @@ namespace Getaway.Editor
             Check(game.Loot == cash, "Environment damage does not deduct money");
             car.ApplyDamage(10, "police", true);
             Check(game.Loot == cash - 1200 && game.LostLoot == 1200, "Police damage event deducts proportional money");
-            Teleport(car, game.World.Destination); game.Tick(0.1f);
-            Check(game.State == MissionState.Chase, "Destination blocked while wanted");
-            Teleport(car, game.World.Pickup + Vector3.forward * 160); game.Tick(2);
+            Teleport(car, game.World.Destination + Vector3.left * 40); game.Tick(0.1f);
+            Check(game.State == MissionState.Chase, "Short of the city limits the run continues");
             var cop = game.World.Police[0].GetComponent<ArcadeCar>();
-            Teleport(cop, car.transform.position + Vector3.right * 10); game.Tick(0.1f);
-            Check(game.EscapeProgress == 0, "Escape countdown resets when police approach");
-            Teleport(cop, new Vector3(4, 0.8f, -5)); game.Tick(game.Stage.escapeSeconds + 0.1f);
-            Check(game.State == MissionState.Escaped, "Sustained separation evades police");
-            Teleport(car, game.World.Destination); car.Body.linearVelocity = Vector3.forward * 5; game.Tick(0.1f);
-            Check(game.State == MissionState.Escaped, "Must stop at destination");
-            car.Body.linearVelocity = Vector3.zero; game.Tick(0.1f);
-            Check(game.State == MissionState.Won && ProgressStore.Load().highestUnlocked >= 1, "Delivery wins and persists unlock");
+            Teleport(cop, new Vector3(4, 0.8f, 5)); game.Tick(0.1f);
+            Check(game.State == MissionState.Chase, "Losing the patrols is not by itself a win");
+            int carried = game.Loot;
+            Teleport(car, game.World.Destination); car.Body.linearVelocity = Vector3.right * 20; game.Tick(0.1f);
+            Check(game.State == MissionState.Won && ProgressStore.Load().highestUnlocked >= 1,
+                "Crossing the city limits at speed wins and persists unlock");
             long wallet = game.Progress.wallet;
-            Check(wallet == game.Loot && !game.PendingPayout, "Escaped cash is banked once");
+            Check(wallet == carried && !game.PendingPayout, "Rescued cash is banked once");
             game.RetryPayout(); game.Tick(1);
             Check(game.Progress.wallet == wallet, "Repeated result updates cannot duplicate payout");
             game.OpenShop(); game.BuyUpgrade(UpgradeKind.Engine); game.CloseShop();

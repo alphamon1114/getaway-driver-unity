@@ -13,19 +13,22 @@ MonoBehaviour:
   m_Name: Stage2
   m_EditorClassIdentifier:
   title: Downtown Heat
-  briefing: Four crew members need a ride through downtown roadworks. Keep the car intact.
+  briefing: Downtown is locked down and the patrols are quicker. Thread the barricades, take the haul, and do not let them pin you.
   roadLength: 850
   timeLimit: 120
-  policeCount: 3
-  policeSpeed: 26
-  escapeDistance: 70
-  escapeSeconds: 6
   crewCount: 4
   seed: 28
+  policeCount: 3
+  policeSpeed: 46
+  policeAcceleration: 9.5
   bankDistance: 240
-  crewExitTime: 18
-  lateGrace: 12
-  arrivalScoreWindow: 10
+  bankDeadline: 18
+  arrivalParTime: 9
   maxArrivalScore: 1000
+  firstRoadblock: 55
+  roadblockSpacing: 55
+  roadblockGap: 7
+  exitJunctionOffset: 130
+  exitRoadLength: 190
   startingLoot: 18000
   cashLossPerDamage: 180

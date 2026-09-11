@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace Getaway
 {
-    public enum MissionState { Briefing, Pickup, Chase, Escaped, Won, Lost }
+    public enum MissionState { Briefing, Pickup, Chase, Won, Lost }
 
     [RequireComponent(typeof(WorldBuilder), typeof(RunLogger))]
     public sealed class GameSession : MonoBehaviour
@@ -13,14 +13,15 @@ namespace Getaway
         public bool Paused { get; private set; }
         public float Remaining { get; private set; }
         public float Boarding => Appointment == null ? 0 : (float)Appointment.Boarding;
-        public float EscapeProgress { get; private set; }
         public float ArrestProgress { get; private set; }
         public float NearestPolice { get; private set; }
         public string Result { get; private set; }
         public WorldBuilder World { get; private set; }
         public RunLogger Logger { get; private set; }
         public StageDefinition Stage => stages[StageIndex];
-        public bool Active => State == MissionState.Pickup || State == MissionState.Chase || State == MissionState.Escaped;
+        public bool Active => State == MissionState.Pickup || State == MissionState.Chase;
+        /// <summary>Radius of the city-limits zone that ends a successful run.</summary>
+        public const float EscapeRadius = 10;
         public CareerAccount Account { get; private set; }
         public CareerData Progress => Account.Data;
         public PickupSchedule Appointment { get; private set; }
@@ -34,8 +35,21 @@ namespace Getaway
         public float Elapsed => elapsed;
         string runId;
         int runSafeLevel;
-        bool crewShown;
-        public Vector3 Objective => State == MissionState.Pickup ? World.Pickup : World.Destination;
+        // The exit line sits off to one side, so steering the player at it from the far end of the
+        // main road would read as "turn right" for the whole run. Aim at the junction until the
+        // car is actually in the mouth of the escape road.
+        public Vector3 Objective
+        {
+            get
+            {
+                if (World == null || World.Player == null) return Vector3.zero;
+                if (State == MissionState.Pickup) return World.Pickup;
+                float z = World.Player.transform.position.z;
+                return z < World.JunctionZ - WorldBuilder.JunctionHalfWidth
+                    ? new Vector3(0, World.Destination.y, World.JunctionZ)
+                    : World.Destination;
+            }
+        }
         float elapsed, sampleTimer, recoveryCooldown;
         FollowCamera follow;
 
@@ -66,10 +80,10 @@ namespace Getaway
         {
             if (index < 0 || index >= stages.Length || PendingPayout) return;
             Time.timeScale = 1; Paused = false;
-            StageIndex = index; elapsed = sampleTimer = recoveryCooldown = EscapeProgress = ArrestProgress = 0;
+            StageIndex = index; elapsed = sampleTimer = recoveryCooldown = ArrestProgress = 0;
             Remaining = Stage.timeLimit; Result = ""; State = MissionState.Briefing;
-            ShopOpen = false; Loot = LostLoot = BankedThisRun = 0; crewShown = false;
-            Appointment = new PickupSchedule(Stage.crewExitTime, Stage.lateGrace, Stage.arrivalScoreWindow, Stage.maxArrivalScore);
+            ShopOpen = false; Loot = LostLoot = BankedThisRun = 0;
+            Appointment = new PickupSchedule(Stage.bankDeadline, Stage.arrivalParTime, Stage.maxArrivalScore);
             runId = System.Guid.NewGuid().ToString("N");
             World.Build(Stage, Account.Selected);
             World.Player.drivingEnabled = false;
@@ -115,8 +129,7 @@ namespace Getaway
                 bool stopped = FlatDistance(player.transform.position, World.Pickup) < 6 && player.Speed < 1.5f;
                 Appointment.Advance(dt, stopped);
                 if (!arrived && Appointment.ArrivalTime >= 0) Log("bank_arrival", $"time={Appointment.ArrivalTime:F2}; score={ArrivalScore}");
-                if (Appointment.CrewAvailable && !crewShown) { crewShown = true; World.ShowCrew(); Log("crew_exit_bank"); }
-                if (Appointment.Missed) { Finish(false, "You missed the crew's pickup deadline."); return; }
+                if (Appointment.Missed) { Finish(false, "Too slow. The crew was arrested at the bank."); return; }
                 if (Appointment.Boarded)
                 {
                     World.BoardCrew(); World.SpawnPolice(Stage); State = MissionState.Chase;
@@ -129,27 +142,18 @@ namespace Getaway
             foreach (var cop in World.Police)
                 if (cop != null && cop.GetComponent<ArcadeCar>().health > 0)
                     NearestPolice = Mathf.Min(NearestPolice, FlatDistance(player.transform.position, cop.transform.position));
-            if (State == MissionState.Chase)
-            {
-                EscapeProgress = NearestPolice > Stage.escapeDistance ? EscapeProgress + dt : 0;
-                ArrestProgress = NearestPolice < 7 && player.Speed < 2 ? ArrestProgress + dt : Mathf.Max(0, ArrestProgress - dt * 2);
-                if (ArrestProgress >= 4) { Finish(false, "Busted. Police surrounded the vehicle."); return; }
-                if (EscapeProgress >= Stage.escapeSeconds)
-                {
-                    State = MissionState.Escaped;
-                    foreach (var cop in World.Police) cop.searching = true;
-                    Log("pursuit_evaded");
-                }
-            }
-            // Escaped is latched for this arcade prototype; further waves are a future extension.
-            if (State == MissionState.Escaped && FlatDistance(player.transform.position, World.Destination) < 7 && player.Speed < 2)
-                Finish(true, "Crew delivered safely.");
+            // The patrols never give up. Getting out is about reaching the city limits intact,
+            // so crossing the line at speed counts: no stopping next to a police car required.
+            ArrestProgress = NearestPolice < 7 && player.Speed < 2 ? ArrestProgress + dt : Mathf.Max(0, ArrestProgress - dt * 2);
+            if (ArrestProgress >= 4) { Finish(false, "Busted. Police boxed the vehicle in."); return; }
+            if (FlatDistance(player.transform.position, World.Destination) < EscapeRadius)
+                Finish(true, "Out of the city. The crew is clear.");
         }
         public static float FlatDistance(Vector3 a, Vector3 b) { a.y = b.y = 0; return Vector3.Distance(a, b); }
         void OnDamage(float amount, string source) { Log("vehicle_damage", source + ": " + amount.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)); }
         void OnPoliceImpact(float actualDamage)
         {
-            if (State != MissionState.Chase && State != MissionState.Escaped) return;
+            if (State != MissionState.Chase) return;
             int loss = GarageCatalog.CashLoss(Loot, actualDamage, Stage.cashLossPerDamage, runSafeLevel);
             Loot -= loss; LostLoot += loss;
             Log("police_cash_loss", $"damage={actualDamage:F2}; loss={loss}; remaining={Loot}");

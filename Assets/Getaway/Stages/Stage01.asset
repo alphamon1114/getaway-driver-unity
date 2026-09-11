@@ -13,19 +13,22 @@ MonoBehaviour:
   m_Name: Stage1
   m_EditorClassIdentifier:
   title: The First Job
-  briefing: Collect three crew members outside the bank, lose the patrol cars, and reach the safehouse.
+  briefing: Patrol cars are already setting up barricades. Punch through to the bank, load the crew, and run for the city limits.
   roadLength: 650
   timeLimit: 100
-  policeCount: 2
-  policeSpeed: 24
-  escapeDistance: 65
-  escapeSeconds: 5
   crewCount: 3
   seed: 17
+  policeCount: 2
+  policeSpeed: 38
+  policeAcceleration: 9
   bankDistance: 180
-  crewExitTime: 14
-  lateGrace: 12
-  arrivalScoreWindow: 10
+  bankDeadline: 14
+  arrivalParTime: 7
   maxArrivalScore: 1000
+  firstRoadblock: 55
+  roadblockSpacing: 55
+  roadblockGap: 8
+  exitJunctionOffset: 120
+  exitRoadLength: 170
   startingLoot: 12000
   cashLossPerDamage: 120

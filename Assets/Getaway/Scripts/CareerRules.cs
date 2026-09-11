@@ -4,6 +4,8 @@ using System.Collections.Generic;
 namespace Getaway
 {
     // These production rules are also tested without an editor or a graphics device.
+    // The crew waits inside the bank from the start: the job is to beat the police roadblocks
+    // there before the deadline, and arriving sooner is always worth more.
     public sealed class PickupSchedule
     {
         public double Elapsed { get; private set; }
@@ -12,28 +14,37 @@ namespace Getaway
         public double Boarding { get; private set; }
         public bool Boarded { get; private set; }
         public bool Missed { get; private set; }
-        public bool CrewAvailable => Elapsed >= Target;
-        public readonly double Target, Grace, ScoreWindow, BoardingSeconds;
+        public readonly double Deadline, ParTime, BoardingSeconds;
         public readonly int MaxScore;
-        public PickupSchedule(double target, double grace, double window, int maxScore, double boardingSeconds = 2)
+        public double Remaining => Math.Max(0, Deadline - Elapsed);
+        public PickupSchedule(double deadline, double parTime, int maxScore, double boardingSeconds = 2)
         {
-            Target = Math.Max(1, target); Grace = Math.Max(3, grace);
-            ScoreWindow = Math.Max(0.1, window); MaxScore = Math.Max(0, maxScore);
+            Deadline = Math.Max(1, deadline);
+            ParTime = Math.Max(0, Math.Min(parTime, Deadline - 0.1));
+            MaxScore = Math.Max(0, maxScore);
             BoardingSeconds = Math.Max(0.1, boardingSeconds);
+        }
+        // Full marks at or under par, sliding to nothing at the deadline. Faster is never punished,
+        // so engine upgrades buy score instead of costing it.
+        public static int ScoreFor(double arrival, double deadline, double parTime, int maxScore)
+        {
+            if (arrival < 0 || arrival > deadline) return 0;
+            if (deadline <= parTime) return maxScore;
+            double fraction = (deadline - arrival) / (deadline - parTime);
+            return (int)Math.Round(maxScore * Math.Max(0, Math.Min(1, fraction)), MidpointRounding.AwayFromZero);
         }
         public void Advance(double dt, bool stoppedAtBank)
         {
             if (Boarded || Missed || dt <= 0 || double.IsNaN(dt) || double.IsInfinity(dt)) return;
-            double before = Elapsed; Elapsed += dt;
+            Elapsed += dt;
             if (stoppedAtBank && ArrivalTime < 0)
             {
                 ArrivalTime = Elapsed;
-                Score = (int)Math.Round(MaxScore * Math.Max(0, 1 - Math.Abs(ArrivalTime - Target) / ScoreWindow), MidpointRounding.AwayFromZero);
+                Score = ScoreFor(ArrivalTime, Deadline, ParTime, MaxScore);
             }
-            if (!stoppedAtBank) Boarding = 0;
-            else Boarding += Math.Max(0, Math.Min(Elapsed, Target + Grace) - Math.Max(before, Target));
+            Boarding = stoppedAtBank ? Boarding + dt : 0;
             if (Boarding + 0.000001 >= BoardingSeconds) Boarded = true;
-            else if (Elapsed >= Target + Grace) Missed = true;
+            else if (Elapsed >= Deadline) Missed = true;
         }
     }
     [Serializable]

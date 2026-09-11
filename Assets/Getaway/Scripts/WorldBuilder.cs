@@ -10,14 +10,33 @@ namespace Getaway
         public GameObject vanVisualPrefab;
         public GameObject policeVisualPrefab;
         public GameObject crewVisualPrefab;
+
+        // Half width of the drivable surface. Boundary walls sit one metre outside it.
+        public const float RoadHalfWidth = 16;
+        // Half width in z of the mouth where the escape road leaves the city.
+        public const float JunctionHalfWidth = 16;
+
         public Vector3 Pickup { get; private set; }
         public Vector3 Destination { get; private set; }
+        /// <summary>Centre of the junction where the escape road branches off the main road.</summary>
+        public float JunctionZ { get; private set; }
         public ArcadeCar Player { get; private set; }
         public readonly List<PoliceDriver> Police = new List<PoliceDriver>();
+        // x is the barricade line's z position, y is the x centre of its open gap.
+        readonly List<Vector2> roadblocks = new List<Vector2>();
         readonly List<GameObject> crew = new List<GameObject>();
         readonly List<Material> materials = new List<Material>();
         GameObject root;
         PhysicsMaterial slippery;
+
+        /// <summary>First barricade line ahead of z, so drivers can aim at its gap instead of the wall.</summary>
+        public bool NextRoadblock(float z, out float blockZ, out float gapX)
+        {
+            blockZ = gapX = 0;
+            for (int i = 0; i < roadblocks.Count; i++)
+                if (roadblocks[i].x > z) { blockZ = roadblocks[i].x; gapX = roadblocks[i].y; return true; }
+            return false;
+        }
 
         Material Material(Color color)
         {
@@ -40,6 +59,18 @@ namespace Getaway
             if (!solid) { obj.GetComponent<Collider>().enabled = false; Destroy(obj.GetComponent<Collider>()); }
             return obj;
         }
+        // Spans are clipped to nothing when an opening swallows them, which is how the boundary
+        // wall and each barricade line get their gaps without special cases at the call site.
+        void ZSpan(string label, float x, float y, float from, float to, float width, float height, Material mat, bool solid = true)
+        {
+            if (to - from <= 0.2f) return;
+            Box(label, root.transform, new Vector3(x, y, (from + to) / 2), new Vector3(width, height, to - from), mat, solid);
+        }
+        void XSpan(string label, float z, float y, float from, float to, float depth, float height, Material mat, bool solid = true)
+        {
+            if (to - from <= 0.2f) return;
+            Box(label, root.transform, new Vector3((from + to) / 2, y, z), new Vector3(to - from, height, depth), mat, solid);
+        }
 
         public void Build(StageDefinition stage, OwnedVehicle loadout = null)
         {
@@ -53,41 +84,61 @@ namespace Getaway
             var orange = Material(new Color(0.93f, 0.30f, 0.09f));
             var green = Material(new Color(0.17f, 0.78f, 0.52f));
             var blue = Material(new Color(0.10f, 0.55f, 0.9f));
+            var barrier = Material(new Color(0.95f, 0.82f, 0.16f));
+
             float length = stage.roadLength;
-            Pickup = new Vector3(0, 0.65f, Mathf.Clamp(stage.bankDistance, 40, length - 100));
-            Destination = new Vector3(0, 0.65f, length - 25);
+            Pickup = new Vector3(0, 0.65f, Mathf.Clamp(stage.bankDistance, 40, length - 160));
+            JunctionZ = Mathf.Clamp(length - stage.exitJunctionOffset, Pickup.z + 90, length - 40);
+            float exitEndX = RoadHalfWidth + stage.exitRoadLength;
+            Destination = new Vector3(exitEndX - 22, 0.65f, JunctionZ);
             slippery = new PhysicsMaterial("Arcade car surface") { dynamicFriction = 0, staticFriction = 0, frictionCombine = PhysicsMaterialCombine.Minimum, bounciness = 0 };
+
             Box("Ground", root.transform, new Vector3(0, -0.6f, length / 2), new Vector3(160, 1, length + 160), ground);
-            Box("Road", root.transform, new Vector3(0, -0.1f, length / 2), new Vector3(32, 0.2f, length + 100), road);
+            Box("Road", root.transform, new Vector3(0, -0.1f, length / 2), new Vector3(RoadHalfWidth * 2, 0.2f, length + 100), road);
+
+            // Escape road: the highway out of the city, leaving the right-hand side near the top of the map.
+            float mouth0 = JunctionZ - JunctionHalfWidth, mouth1 = JunctionZ + JunctionHalfWidth;
+            XSpan("Exit ground", JunctionZ, -0.6f, RoadHalfWidth, exitEndX + 50, JunctionHalfWidth * 2 + 90, 1, ground);
+            XSpan("Exit road", JunctionZ, -0.1f, RoadHalfWidth - 2, exitEndX, JunctionHalfWidth * 2, 0.2f, road);
             for (int side = -1; side <= 1; side += 2)
-            {
-                Box("Road boundary", root.transform, new Vector3(side * 17, 1, length / 2), new Vector3(1, 2, length + 100), building);
-                Box("Edge stripe", root.transform, new Vector3(side * 15, 0.02f, length / 2), new Vector3(0.15f, 0.02f, length + 90), line, false);
-            }
+                XSpan("Exit boundary", JunctionZ + side * (JunctionHalfWidth + 1), 1, RoadHalfWidth, exitEndX + 6, 1, 2, building);
+            Box("City limits gate", root.transform, new Vector3(exitEndX + 5, 1, JunctionZ), new Vector3(1, 2, JunctionHalfWidth * 2), building);
+
+            // Main road boundaries. The right-hand wall opens only at the junction mouth.
+            ZSpan("Road boundary", -17, 1, -50, length + 50, 1, 2, building);
+            ZSpan("Road boundary", 17, 1, -50, mouth0, 1, 2, building);
+            ZSpan("Road boundary", 17, 1, mouth1, length + 50, 1, 2, building);
+            ZSpan("Edge stripe", -15, 0.02f, -45, length + 45, 0.15f, 0.02f, line, false);
+            ZSpan("Edge stripe", 15, 0.02f, -45, mouth0, 0.15f, 0.02f, line, false);
+            ZSpan("Edge stripe", 15, 0.02f, mouth1, length + 45, 0.15f, 0.02f, line, false);
             Box("End barrier", root.transform, new Vector3(0, 1, length + 45), new Vector3(35, 2, 1), building);
             Box("Start barrier", root.transform, new Vector3(0, 1, -48), new Vector3(35, 2, 1), building);
             for (int z = -30; z < length + 35; z += 12)
                 Box("Lane marking", root.transform, new Vector3(0, 0.025f, z), new Vector3(0.2f, 0.03f, 5), line, false);
+            for (float x = RoadHalfWidth + 10; x < exitEndX - 6; x += 12)
+                Box("Exit lane marking", root.transform, new Vector3(x, 0.025f, JunctionZ), new Vector3(5, 0.03f, 0.2f), line, false);
+
             var rng = new System.Random(stage.seed);
             for (int z = 0; z < length; z += 28)
                 for (int side = -1; side <= 1; side += 2)
                 {
+                    // Leave the junction mouth clear so the escape road is visible from the main road.
+                    if (side > 0 && Mathf.Abs(z - JunctionZ) < JunctionHalfWidth + 14) continue;
                     float h = 9 + rng.Next(20);
                     Box("City block", root.transform, new Vector3(side * 30, h / 2, z), new Vector3(18, h, 21), building);
                     for (int y = 3; y < h - 1; y += 4)
                         Box("Window strip", root.transform, new Vector3(side * 20.9f, y, z), new Vector3(0.1f, 1.4f, 15), windows, false);
                 }
-            for (int z = 125; z < length - 90; z += 85)
-            {
-                if (Mathf.Abs(z - Pickup.z) < 25) continue;
-                float x = ((z / 85) % 2 == 0 ? -1 : 1) * 7;
-                Box("Roadworks", root.transform, new Vector3(x, 0.7f, z), new Vector3(8, 1.4f, 2), orange);
-            }
+
+            BuildRoadblocks(stage, rng, barrier, blue);
+
             Box("Pickup zone", root.transform, new Vector3(0, 0.04f, Pickup.z), new Vector3(12, 0.06f, 12), blue, false);
-            Box("Safehouse zone", root.transform, new Vector3(0, 0.04f, Destination.z), new Vector3(14, 0.06f, 14), green, false);
             Box("Bank", root.transform, new Vector3(25, 5, Pickup.z), new Vector3(14, 10, 20), blue);
+            Box("Escape zone", root.transform, new Vector3(Destination.x, 0.04f, JunctionZ), new Vector3(20, 0.06f, JunctionHalfWidth * 2), green, false);
             Label("BANK / PICKUP", new Vector3(0, 6, Pickup.z), blue.color);
-            Label("SAFEHOUSE", new Vector3(0, 7, Destination.z), green.color);
+            Label("CITY LIMITS", new Vector3(Destination.x, 7, JunctionZ), green.color);
+            Label("EXIT >>", new Vector3(9, 6, JunctionZ), green.color);
+
             for (int i = 0; i < stage.crewCount; i++)
             {
                 GameObject member;
@@ -102,8 +153,8 @@ namespace Getaway
                 member.name = "Crew " + (i + 1);
                 member.transform.position = new Vector3(5.5f, 1, Pickup.z - 3 + i * 2);
                 crew.Add(member);
-                member.SetActive(false);
             }
+
             if (loadout == null) loadout = new OwnedVehicle { id = "sedan" };
             Color paint = loadout.id == "coupe" ? new Color(0.8f, 0.12f, 0.20f) : loadout.id == "van" ? new Color(0.18f, 0.55f, 0.4f) : new Color(0.9f, 0.48f, 0.13f);
             GameObject prefab = loadout.id == "coupe" ? coupeVisualPrefab : loadout.id == "van" ? vanVisualPrefab : playerVisualPrefab;
@@ -117,6 +168,31 @@ namespace Getaway
                 else if (loadout.id == "coupe") cabin.localScale = new Vector3(1.5f, 0.4f, 1.6f);
             }
         }
+
+        // Every line spans the road except for one gap, and consecutive lines never share a lane,
+        // so the route is a readable slalom rather than a wall of dice rolls.
+        void BuildRoadblocks(StageDefinition stage, System.Random rng, Material barrier, Material beacon)
+        {
+            float[] lanes = { -10.5f, -5.25f, 0, 5.25f, 10.5f };
+            float half = Mathf.Clamp(stage.roadblockGap, 5, 16) / 2;
+            float spacing = Mathf.Max(25, stage.roadblockSpacing);
+            int previous = -1;
+            for (float z = Mathf.Max(30, stage.firstRoadblock); z < stage.roadLength - 60; z += spacing)
+            {
+                if (Mathf.Abs(z - Pickup.z) < 24) continue;
+                if (Mathf.Abs(z - JunctionZ) < JunctionHalfWidth + 20) continue;
+                int lane = rng.Next(lanes.Length);
+                if (lane == previous) lane = (lane + 1 + rng.Next(lanes.Length - 1)) % lanes.Length;
+                previous = lane;
+                float gap = lanes[lane];
+                roadblocks.Add(new Vector2(z, gap));
+                XSpan("Roadblock", z, 0.7f, -RoadHalfWidth, gap - half, 2, 1.4f, barrier);
+                XSpan("Roadblock", z, 0.7f, gap + half, RoadHalfWidth, 2, 1.4f, barrier);
+                Box("Roadblock beacon", root.transform, new Vector3(Mathf.Clamp(gap - half - 1.2f, -RoadHalfWidth, RoadHalfWidth), 1.7f, z), new Vector3(0.5f, 0.5f, 0.5f), beacon, false);
+                Box("Roadblock beacon", root.transform, new Vector3(Mathf.Clamp(gap + half + 1.2f, -RoadHalfWidth, RoadHalfWidth), 1.7f, z), new Vector3(0.5f, 0.5f, 0.5f), beacon, false);
+            }
+        }
+
         void Label(string text, Vector3 position, Color color)
         {
             var obj = new GameObject(text);
@@ -158,7 +234,6 @@ namespace Getaway
             return obj.AddComponent<ArcadeCar>();
         }
         public void BoardCrew() { foreach (var member in crew) member.SetActive(false); }
-        public void ShowCrew() { foreach (var member in crew) member.SetActive(true); }
         public void SpawnPolice(StageDefinition stage)
         {
             for (int i = 0; i < stage.policeCount; i++)
@@ -166,9 +241,10 @@ namespace Getaway
                 float spawnZ = Player.transform.position.z - 28 - i * 7;
                 var car = Car("Police " + (i + 1), new Vector3(i % 2 == 0 ? -4 : 4, 0.8f, spawnZ), Material(new Color(0.8f, 0.84f, 0.9f)), policeVisualPrefab);
                 car.topSpeed = stage.policeSpeed;
+                car.acceleration = stage.policeAcceleration;
                 // Patrol cars keep full grip: a sliding pursuer loses the player instead of pressuring them.
                 car.handbrakeDrift = false;
-                var ai = car.gameObject.AddComponent<PoliceDriver>(); ai.target = Player;
+                var ai = car.gameObject.AddComponent<PoliceDriver>(); ai.target = Player; ai.world = this;
                 Police.Add(ai);
                 Box("Red beacon", car.transform, new Vector3(-0.45f, 1.03f, 0), new Vector3(0.6f, 0.16f, 0.3f), Material(Color.red), false);
                 Box("Blue beacon", car.transform, new Vector3(0.45f, 1.03f, 0), new Vector3(0.6f, 0.16f, 0.3f), Material(Color.blue), false);
@@ -178,7 +254,7 @@ namespace Getaway
         {
             if (root != null) { root.SetActive(false); Destroy(root); }
             foreach (var mat in materials) if (mat != null) Destroy(mat);
-            materials.Clear(); Police.Clear(); crew.Clear();
+            materials.Clear(); Police.Clear(); crew.Clear(); roadblocks.Clear();
             if (slippery != null) Destroy(slippery);
         }
         void OnDestroy() { Clear(); }

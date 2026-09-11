@@ -4,28 +4,50 @@ using System.Text.Json;
 int count = 0;
 var results = new List<string>();
 void Check(bool ok, string name) { if (!ok) throw new Exception(name); results.Add("PASS " + name); Console.WriteLine("PASS " + name); count++; }
+// Deadline 14s, full marks at or under 7s. Arriving sooner must never be worth less,
+// otherwise the garage would be selling engine upgrades that cost the player score.
 PickupSchedule At(double time)
 {
-    var a = new PickupSchedule(14, 12, 10, 1000);
+    var a = new PickupSchedule(14, 7, 1000);
     a.Advance(time - 0.02, false); a.Advance(0.02, true); return a;
 }
-var perfect = At(14); Check(perfect.Score == 1000, "Exact appointment awards 1000 points");
-Check(At(12).Score == 800 && At(16).Score == 800, "Early and late scores are symmetric");
-Check(At(5).Score == 100 && At(3).Score == 0, "Score falls with error and clamps at zero");
-var early = At(8); int earlyScore = early.Score; early.Advance(6, true);
-Check(early.Score == earlyScore && !early.Boarded && early.Boarding == 0, "Waiting early does not farm score or board before crew exits");
-early.Advance(2, true); Check(early.Boarded && !early.Missed, "Early arrival can wait and board at exit time");
-var reenter = At(8); reenter.Advance(5.98, false); reenter.Advance(0.02, true);
-Check(reenter.Score == earlyScore, "Re-entering the bank cannot reroll timing score");
-var depart = At(14); depart.Advance(1, true); depart.Advance(0.1, false);
-Check(depart.Boarding == 0, "Leaving or moving resets boarding progress");
-depart.Advance(2, true); Check(depart.Boarded, "Continuous stopped boarding succeeds");
-var miss = new PickupSchedule(14, 12, 10, 1000); miss.Advance(27, false);
-Check(miss.Missed && !miss.Boarded, "Missing pickup deadline fails");
-var late = At(25); late.Advance(2, true);
-Check(late.Missed && !late.Boarded, "Not enough boarding time before deadline fails");
-var edge = At(24); edge.Advance(2, true);
-Check(edge.Boarded, "Boarding completing exactly at deadline succeeds");
+bool Near(int value, int expected, int slack = 2) => Math.Abs(value - expected) <= slack;
+Check(Near(At(7).Score, 1000), "Arriving at par time pays the full score");
+Check(At(4).Score == 1000 && At(0.5).Score == 1000, "Beating par cannot pay less than par");
+Check(Near(At(10.5).Score, 500), "Score falls linearly between par and the deadline");
+Check(PickupSchedule.ScoreFor(14, 14, 7, 1000) == 0, "Arriving on the deadline scores nothing");
+Check(PickupSchedule.ScoreFor(20, 14, 7, 1000) == 0, "Arriving past the deadline scores nothing");
+Check(PickupSchedule.ScoreFor(5, 6, 9, 1000) == 1000, "A par slower than the deadline still pays out");
+int monotone = int.MaxValue; bool falling = true;
+for (double t = 0.5; t <= 14; t += 0.25)
+{
+    int s = PickupSchedule.ScoreFor(t, 14, 7, 1000);
+    if (s > monotone) falling = false;
+    monotone = s;
+}
+Check(falling, "Score never rewards a slower run");
+
+var board = At(5); int lockedScore = board.Score;
+board.Advance(1.0, true); Check(!board.Boarded, "One second at the bank is not enough to board");
+board.Advance(0.5, false); Check(board.Boarding == 0, "Moving off resets boarding progress");
+board.Advance(2.01, true); Check(board.Boarded && !board.Missed, "Two continuous seconds boards the crew");
+Check(board.Score == lockedScore, "Boarding does not disturb the locked arrival score");
+
+var reenter = At(9); int firstStop = reenter.Score;
+reenter.Advance(1, false); reenter.Advance(0.02, true);
+Check(reenter.Score == firstStop, "Re-entering the bank cannot reroll the arrival score");
+
+var miss = new PickupSchedule(14, 7, 1000); miss.Advance(14.1, false);
+Check(miss.Missed && !miss.Boarded && miss.Score == 0, "Never reaching the bank fails with no score");
+
+var late = At(13);
+for (int i = 0; i < 200 && !late.Boarded && !late.Missed; i++) late.Advance(0.02, true);
+Check(late.Missed && !late.Boarded, "Arriving too late to finish boarding fails");
+
+var justInTime = At(11.5);
+for (int i = 0; i < 200 && !justInTime.Boarded && !justInTime.Missed; i++) justInTime.Advance(0.02, true);
+Check(justInTime.Boarded && !justInTime.Missed, "Arriving with two seconds to spare boards in time");
+Check(justInTime.Remaining > 0 && justInTime.Remaining < 1, "Remaining time counts down against the deadline");
 Check(GarageCatalog.CashLoss(12000, 10, 120, 0) == 1200, "Police damage deducts proportional cash");
 Check(GarageCatalog.CashLoss(12000, 20, 120, 0) == 2400, "Double damage causes double loss");
 Check(GarageCatalog.CashLoss(12000, 10, 120, 3) == 480, "Safe level three reduces money loss by 60 percent");

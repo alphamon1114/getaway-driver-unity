@@ -41,17 +41,17 @@ namespace Getaway
             if (game.State == MissionState.Pickup)
             {
                 var a = game.Appointment;
-                string timing = a.CrewAvailable ? $"Crew is out! Depart before {a.Target + a.Grace:0}s." : $"Crew exits in {a.Target - a.Elapsed:0.0}s (appointment {a.Target:0}s).";
-                Label(40, 568, 930, 30, timing, text);
-                string score = a.ArrivalTime < 0 ? "First stop in the BLUE bank zone locks your timing score." : $"Arrival {a.ArrivalTime:0.00}s / target {a.Target:0.00}s  —  {a.Score} points (locked)";
+                Label(40, 568, 930, 30, $"Beat the roadblocks to the BLUE bank zone and board:  {a.Remaining:0.0}s left of {a.Deadline:0}s", text);
+                string score = a.ArrivalTime < 0
+                    ? $"Arrive by {a.ParTime:0}s for the full {a.MaxScore} points. Every second after that is worth less."
+                    : $"Arrived {a.ArrivalTime:0.00}s  —  {a.Score} / {a.MaxScore} points (locked)";
                 Label(40, 609, 930, 30, score, small);
-                Label(40, 650, 930, 30, $"Stay stopped to board after the crew exits: {game.Boarding:0.0} / 2.0s", small);
+                Label(40, 650, 930, 30, $"Hold still in the zone to load the crew: {game.Boarding:0.0} / 2.0s", small);
             }
             else
             {
-                string goal = game.State == MissionState.Chase ? $"Lose the police: stay {game.Stage.escapeDistance:0}m ahead for {game.Stage.escapeSeconds:0}s." : "Police evaded. Stop in the GREEN safehouse zone to bank the cash.";
-                Label(40, 568, 930, 60, goal, text);
-                Label(40, 630, 930, 50, $"Escape {game.EscapeProgress:0.0}s   Arrest {game.ArrestProgress:0.0} / 4s   Police damage reduces carried money.", small);
+                Label(40, 568, 930, 60, "Run for the GREEN city limits on the exit road. Reach it with the car intact and the cash is yours.", text);
+                Label(40, 630, 930, 50, $"Nearest patrol {(float.IsInfinity(game.NearestPolice) ? 0 : game.NearestPolice):0}m   Boxed in {game.ArrestProgress:0.0} / 4s   Every police hit costs money.", small);
             }
             Vector3 local = game.World.Player.transform.InverseTransformPoint(game.Objective);
             string direction = local.z < 0 ? "TURN BACK" : Mathf.Abs(local.x) < 5 ? "AHEAD" : local.x < 0 ? "LEFT" : "RIGHT";
@@ -73,7 +73,7 @@ namespace Getaway
             if (game.State == MissionState.Briefing)
             {
                 Label(320, 242, 640, 60, game.Stage.briefing, text);
-                Label(320, 315, 640, 62, $"Crew exits at {game.Stage.crewExitTime:0}s. Finish boarding by {game.Stage.crewExitTime + game.Stage.lateGrace:0}s.\nPotential haul: ${game.Stage.startingLoot:N0}. Timing: up to {game.Stage.maxArrivalScore} points.", small);
+                Label(320, 315, 640, 62, $"Board at the bank within {game.Stage.bankDeadline:0}s; under {game.Stage.arrivalParTime:0}s pays the full {game.Stage.maxArrivalScore} points.\nHaul ${game.Stage.startingLoot:N0}, then reach the city limits before the patrols wreck you.", small);
                 if (Button(320, 390, 640, 44, "Start job")) game.Begin();
             }
             else

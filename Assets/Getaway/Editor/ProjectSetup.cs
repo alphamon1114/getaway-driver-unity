@@ -30,10 +30,14 @@ namespace Getaway.Editor
             session.stages = new StageDefinition[3];
             string[] titles = { "The First Job", "Downtown Heat", "The Last Ride" };
             string[] briefs = {
-                "You are the crew's driver. Collect three members outside the bank, lose the patrol cars, and bring everyone to the safehouse.",
-                "The next job has drawn more attention. Four crew members need a ride through the downtown roadworks. Keep the car intact.",
-                "One final getaway. The whole crew is counting on you. Break away from four patrol cars and reach the distant hideout."
+                "Patrol cars are already setting up barricades. Punch through to the bank, load the crew, and run for the city limits.",
+                "Downtown is locked down and the patrols are quicker. Thread the barricades, take the haul, and do not let them pin you.",
+                "Every unit in the city is out and their interceptors are faster than anything in your garage. Drive clean or drive home broke."
             };
+            // Patrol top speeds sit just above the quickest fully upgraded car, but their
+            // acceleration is well below it, so ground is won and lost at every barricade.
+            float[] policeSpeeds = { 38, 46, 56 }, policeAccels = { 9, 9.5f, 10 };
+            float[] deadlines = { 14, 18, 22 }, pars = { 7, 9, 11 }, gaps = { 8, 7, 6.5f };
             for (int i = 0; i < 3; i++)
             {
                 string path = $"Assets/Getaway/Stages/Stage{i + 1:00}.asset";
@@ -42,10 +46,12 @@ namespace Getaway.Editor
                 {
                     stage = ScriptableObject.CreateInstance<StageDefinition>();
                     stage.title = titles[i]; stage.briefing = briefs[i]; stage.roadLength = 650 + i * 200;
-                    stage.timeLimit = 100 + i * 20; stage.policeCount = 2 + i; stage.policeSpeed = 24 + i * 2;
-                    stage.escapeDistance = 65 + i * 5; stage.escapeSeconds = 5 + i;
-                    stage.crewCount = 3 + i; stage.seed = 17 + i * 11;
-                    stage.bankDistance = 180 + i * 60; stage.crewExitTime = 14 + i * 4;
+                    stage.timeLimit = 100 + i * 20; stage.crewCount = 3 + i; stage.seed = 17 + i * 11;
+                    stage.policeCount = 2 + i; stage.policeSpeed = policeSpeeds[i]; stage.policeAcceleration = policeAccels[i];
+                    stage.bankDistance = 180 + i * 60; stage.bankDeadline = deadlines[i]; stage.arrivalParTime = pars[i];
+                    stage.maxArrivalScore = 1000;
+                    stage.firstRoadblock = 55; stage.roadblockSpacing = 55 - i; stage.roadblockGap = gaps[i];
+                    stage.exitJunctionOffset = 120 + i * 10; stage.exitRoadLength = 170 + i * 20;
                     stage.startingLoot = 12000 + i * 6000; stage.cashLossPerDamage = 120 + i * 60;
                     AssetDatabase.CreateAsset(stage, path);
                 }
