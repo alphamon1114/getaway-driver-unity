@@ -51,13 +51,23 @@ namespace Getaway
             else
             {
                 Label(40, 568, 930, 60, "Run for the GREEN city limits on the exit road. Reach it with the car intact and the cash is yours.", text);
-                Label(40, 630, 930, 50, $"Nearest patrol {(float.IsInfinity(game.NearestPolice) ? 0 : game.NearestPolice):0}m   Boxed in {game.ArrestProgress:0.0} / 4s   Every police hit costs money.", small);
+                Label(40, 630, 930, 50, $"{Patrol()}   Boxed in {game.ArrestProgress:0.0} / 4s   Every police hit costs money.", small);
             }
             Vector3 local = game.World.Player.transform.InverseTransformPoint(game.Objective);
             string direction = local.z < 0 ? "TURN BACK" : Mathf.Abs(local.x) < 5 ? "AHEAD" : local.x < 0 ? "LEFT" : "RIGHT";
             Panel(new Rect(1010, 555, 250, 145));
             Label(1030, 578, 220, 42, direction, title);
             Label(1030, 635, 220, 40, $"{GameSession.FlatDistance(game.World.Player.transform.position, game.Objective):0} m to target", text);
+        }
+        // The chase camera faces forward, so a pursuer sitting on the rear bumper is invisible.
+        // This line is the only way the player knows a patrol is closing from behind.
+        string Patrol()
+        {
+            if (game.NearestPatrol == null) return "No patrol in contact";
+            Vector3 local = game.World.Player.transform.InverseTransformPoint(game.NearestPatrol.transform.position);
+            float angle = Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg;
+            string where = Mathf.Abs(angle) > 135 ? "BEHIND" : Mathf.Abs(angle) < 45 ? "AHEAD" : angle < 0 ? "LEFT" : "RIGHT";
+            return $"Patrol {where} {game.NearestPolice:0}m";
         }
         void DrawMenu()
         {

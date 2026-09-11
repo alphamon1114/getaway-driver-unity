@@ -37,7 +37,9 @@ namespace Getaway.Editor
             // Patrol top speeds sit just above the quickest fully upgraded car, but their
             // acceleration is well below it, so ground is won and lost at every barricade.
             float[] policeSpeeds = { 38, 46, 56 }, policeAccels = { 9, 9.5f, 10 };
-            float[] deadlines = { 14, 18, 22 }, pars = { 7, 9, 11 }, gaps = { 8, 7, 6.5f };
+            float[] deadlines = { 13, 17, 20 }, pars = { 7, 9, 11 }, gaps = { 8, 7, 6.5f };
+            float[] parked = { 0.4f, 0.45f, 0.5f };
+            int[] crossTraffic = { 2, 2, 3 };
             for (int i = 0; i < 3; i++)
             {
                 string path = $"Assets/Getaway/Stages/Stage{i + 1:00}.asset";
@@ -50,6 +52,8 @@ namespace Getaway.Editor
                     stage.policeCount = 2 + i; stage.policeSpeed = policeSpeeds[i]; stage.policeAcceleration = policeAccels[i];
                     stage.bankDistance = 180 + i * 60; stage.bankDeadline = deadlines[i]; stage.arrivalParTime = pars[i];
                     stage.maxArrivalScore = 1000;
+                    stage.firstCrossStreet = 95; stage.crossStreetSpacing = 115 - i * 2;
+                    stage.crossTrafficPerStreet = crossTraffic[i]; stage.parkedCarDensity = parked[i];
                     stage.firstRoadblock = 55; stage.roadblockSpacing = 55 - i; stage.roadblockGap = gaps[i];
                     stage.exitJunctionOffset = 120 + i * 10; stage.exitRoadLength = 170 + i * 20;
                     stage.startingLoot = 12000 + i * 6000; stage.cashLossPerDamage = 120 + i * 60;

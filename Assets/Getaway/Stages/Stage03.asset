@@ -22,9 +22,13 @@ MonoBehaviour:
   policeSpeed: 56
   policeAcceleration: 10
   bankDistance: 300
-  bankDeadline: 22
+  bankDeadline: 20
   arrivalParTime: 11
   maxArrivalScore: 1000
+  firstCrossStreet: 95
+  crossStreetSpacing: 110
+  crossTrafficPerStreet: 3
+  parkedCarDensity: 0.5
   firstRoadblock: 55
   roadblockSpacing: 52
   roadblockGap: 6.5

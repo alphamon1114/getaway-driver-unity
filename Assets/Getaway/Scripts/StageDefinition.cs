@@ -27,6 +27,14 @@ namespace Getaway
         [Min(1)] public float arrivalParTime = 7;
         [Min(0)] public int maxArrivalScore = 1000;
 
+        [Header("City grid")]
+        [Min(50)] public float firstCrossStreet = 95;
+        [Min(50)] public float crossStreetSpacing = 115;
+        [Tooltip("Civilian cars driving across the main road at each junction.")]
+        [Range(0, 3)] public int crossTrafficPerStreet = 2;
+        [Tooltip("Chance of a parked car at each kerbside slot.")]
+        [Range(0, 1)] public float parkedCarDensity = 0.4f;
+
         [Header("Roadblocks")]
         [Min(20)] public float firstRoadblock = 55;
         [Min(25)] public float roadblockSpacing = 55;

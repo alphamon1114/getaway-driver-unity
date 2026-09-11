@@ -15,6 +15,8 @@ namespace Getaway
         public float Boarding => Appointment == null ? 0 : (float)Appointment.Boarding;
         public float ArrestProgress { get; private set; }
         public float NearestPolice { get; private set; }
+        /// <summary>Closest live patrol, so the HUD can say where a pursuer the camera cannot see is.</summary>
+        public PoliceDriver NearestPatrol { get; private set; }
         public string Result { get; private set; }
         public WorldBuilder World { get; private set; }
         public RunLogger Logger { get; private set; }
@@ -138,10 +140,14 @@ namespace Getaway
                 }
                 return;
             }
-            NearestPolice = float.PositiveInfinity;
+            NearestPolice = float.PositiveInfinity; NearestPatrol = null;
             foreach (var cop in World.Police)
-                if (cop != null && cop.GetComponent<ArcadeCar>().health > 0)
-                    NearestPolice = Mathf.Min(NearestPolice, FlatDistance(player.transform.position, cop.transform.position));
+            {
+                if (cop == null || cop.GetComponent<ArcadeCar>().health <= 0) continue;
+                float distance = FlatDistance(player.transform.position, cop.transform.position);
+                if (distance >= NearestPolice) continue;
+                NearestPolice = distance; NearestPatrol = cop;
+            }
             // The patrols never give up. Getting out is about reaching the city limits intact,
             // so crossing the line at speed counts: no stopping next to a police car required.
             ArrestProgress = NearestPolice < 7 && player.Speed < 2 ? ArrestProgress + dt : Mathf.Max(0, ArrestProgress - dt * 2);
