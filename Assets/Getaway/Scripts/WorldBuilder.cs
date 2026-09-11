@@ -148,6 +148,8 @@ namespace Getaway
             {
                 var car = Car("Police " + (i + 1), new Vector3(i % 2 == 0 ? -4 : 4, 0.8f, -5 - i * 7), Material(new Color(0.8f, 0.84f, 0.9f)), policeVisualPrefab);
                 car.topSpeed = stage.policeSpeed;
+                // Patrol cars keep full grip: a sliding pursuer loses the player instead of pressuring them.
+                car.handbrakeDrift = false;
                 var ai = car.gameObject.AddComponent<PoliceDriver>(); ai.target = Player;
                 Police.Add(ai);
                 Box("Red beacon", car.transform, new Vector3(-0.45f, 1.03f, 0), new Vector3(0.6f, 0.16f, 0.3f), Material(Color.red), false);
